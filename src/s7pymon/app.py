@@ -23,7 +23,7 @@ from textual.screen import ModalScreen
 from textual.widgets import DataTable, Footer, Header, Input, Label, RichLog, Static
 
 from .connection import ConnectionConfig, ConnectionState, S7Connection
-from .variable import S7Type, S7Variable, compute_read_range, extract_value
+from .variable import S7Area, S7Type, S7Variable, compute_read_range, extract_value
 
 
 @dataclass
@@ -31,11 +31,40 @@ class PendingWrite:
     """Describes a write operation awaiting confirmation."""
 
     description: str  # Human-readable summary
-    db: int
+    area: S7Area
+    db: int  # 0 for non-DB areas
     offset: int
     data: bytearray
     # For display purposes
     detail: str = ""
+
+    @property
+    def target_label(self) -> str:
+        if self.area == S7Area.DB:
+            return f"DB{self.db}"
+        return self.area.value
+
+
+@dataclass
+class ReadGroup:
+    """A group of variables in the same area/DB to be read together."""
+
+    area: S7Area
+    db: int  # 0 for non-DB areas
+    start: int
+    size: int
+
+    @property
+    def label(self) -> str:
+        if self.area == S7Area.DB:
+            return f"DB{self.db}"
+        return f"{self.area.value} ({self.area.description})"
+
+    @property
+    def key(self) -> str:
+        if self.area == S7Area.DB:
+            return f"DB{self.db}"
+        return self.area.value
 
 
 def format_hex_dump(data: bytearray, start_offset: int = 0, bytes_per_line: int = 16) -> str:
@@ -262,7 +291,7 @@ class ConfirmWriteScreen(ModalScreen[bool]):
             yield Label("⚠  Confirm Write to PLC", id="confirm-title")
             yield Label(self._pending.description, id="confirm-detail")
             yield Label(
-                f"DB{self._pending.db} offset {self._pending.offset}: [{hex_str}] ({len(self._pending.data)} bytes)",
+                f"{self._pending.target_label} offset {self._pending.offset}: [{hex_str}] ({len(self._pending.data)} bytes)",
                 id="confirm-bytes",
             )
             if self._pending.detail:
@@ -327,20 +356,15 @@ class S7MonitorApp(App):
         self,
         connection: S7Connection,
         variables: list[S7Variable],
-        db: int,
-        start: int,
-        size: int,
+        read_groups: list[ReadGroup],
         poll_interval: float = 1.0,
     ):
         super().__init__()
         self._connection = connection
         self._variables = variables
-        self._db = db
-        self._start = start
-        self._size = size
+        self._read_groups = read_groups
         self._poll_interval = poll_interval
-        self._current_data: bytearray | None = None
-        self._previous_data: bytearray | None = None
+        self._current_data: dict[str, bytearray] = {}  # keyed by group label
         self._current_values: dict[str, str] = {}
         self._previous_values: dict[str, str] = {}
         self._poll_count = 0
@@ -356,6 +380,7 @@ class S7MonitorApp(App):
         yield Footer()
 
     # Column key constants for DataTable
+    COL_AREA = "col_area"
     COL_VARIABLE = "col_variable"
     COL_TYPE = "col_type"
     COL_OFFSET = "col_offset"
@@ -367,6 +392,7 @@ class S7MonitorApp(App):
         table = self.query_one("#var-table", DataTable)
         table.cursor_type = "row"
         table.zebra_stripes = True
+        table.add_column("Area", key=self.COL_AREA)
         table.add_column("Variable", key=self.COL_VARIABLE)
         table.add_column("Type", key=self.COL_TYPE)
         table.add_column("Offset", key=self.COL_OFFSET)
@@ -374,7 +400,9 @@ class S7MonitorApp(App):
         table.add_column("Raw Hex", key=self.COL_RAW_HEX)
 
         for var in self._variables:
+            area_label = f"DB{var.db}" if var.area == S7Area.DB else var.area.value
             table.add_row(
+                area_label,
                 var.display_name,
                 var.type.value,
                 str(var.offset) + (f".{var.extra}" if var.type == S7Type.BIT else ""),
@@ -389,7 +417,8 @@ class S7MonitorApp(App):
         conn_status.state = self._connection.state
 
         hex_dump = self.query_one("#hex-dump", HexDumpDisplay)
-        hex_dump.db_label = f"DB{self._db}"
+        group_labels = ", ".join(g.label for g in self._read_groups)
+        hex_dump.db_label = group_labels
 
         log = self.query_one("#log-panel", RichLog)
         log.write("[bold]S7 Monitor[/bold] ready. Connecting…")
@@ -429,39 +458,58 @@ class S7MonitorApp(App):
 
     @work(thread=True)
     def _do_read(self) -> None:
-        """Read DB data in a worker thread."""
+        """Read all area groups in a worker thread."""
         if not self._connection.connected:
             return
         try:
-            result = self._connection.db_read(self._db, self._start, self._size)
-            self.call_from_thread(self._on_data_received, result.data)
+            results: dict[str, tuple[bytearray, int]] = {}
+            for group in self._read_groups:
+                result = self._connection.area_read(group.area, group.start, group.size, db=group.db)
+                results[group.key] = (result.data, group.start)
+            self.call_from_thread(self._on_data_received, results)
         except Exception as e:
             log = self.query_one("#log-panel", RichLog)
             self.call_from_thread(log.write, f"[red]Read error: {e}[/red]")
             self.call_from_thread(self._update_connection_state)
 
-    def _on_data_received(self, data: bytearray) -> None:
-        """Process received data on the main thread."""
-        self._previous_data = self._current_data
-        self._current_data = data
+    def _group_key_for_var(self, var: S7Variable) -> str:
+        """Get the read group key for a variable."""
+        if var.area == S7Area.DB:
+            return f"DB{var.db}"
+        return var.area.value
+
+    def _on_data_received(self, results: dict[str, tuple[bytearray, int]]) -> None:
+        """Process received data from all groups on the main thread."""
+        self._current_data = results
         self._poll_count += 1
 
-        # Update hex dump
+        # Build combined hex dump
         hex_dump = self.query_one("#hex-dump", HexDumpDisplay)
-        hex_dump.hex_content = format_hex_dump(data, self._start)
+        hex_parts = []
+        for group in self._read_groups:
+            if group.key in results:
+                data, start = results[group.key]
+                hex_parts.append(f"  ─── {group.label} ───")
+                hex_parts.append(format_hex_dump(data, start))
+        hex_dump.hex_content = "\n".join(hex_parts) if hex_parts else "  No data yet"
 
         # Update variable table
         self._previous_values = dict(self._current_values)
         table = self.query_one("#var-table", DataTable)
 
         for var in self._variables:
+            group_key = self._group_key_for_var(var)
+            group_data = results.get(group_key)
+            if group_data is None:
+                continue
+            data, data_start = group_data
             try:
-                value = extract_value(var, data, self._start)
+                value = extract_value(var, data, data_start)
                 formatted = var.format_value(value)
                 self._current_values[var.spec] = formatted
 
                 # Get raw hex for this variable's bytes
-                local_offset = var.offset - self._start
+                local_offset = var.offset - data_start
                 raw_bytes = data[local_offset : local_offset + var.byte_size]
                 raw_hex = " ".join(f"{b:02X}" for b in raw_bytes)
 
@@ -521,14 +569,15 @@ class S7MonitorApp(App):
             parsed = var.parse_input(text)
 
             if var.type == S7Type.BIT:
-                result = self._connection.db_read(self._db, var.offset, 1)
+                result = self._connection.area_read(var.area, var.offset, 1, db=var.db)
                 encoded = var.encode_bit(result.data[0], parsed)
             else:
                 encoded = var.encode(parsed)
 
             pending = PendingWrite(
                 description=f"Set {var.display_name} = {parsed}",
-                db=self._db,
+                area=var.area,
+                db=var.db,
                 offset=var.offset,
                 data=encoded,
                 detail=f"Variable: {var.spec} ({var.type.value})",
@@ -557,7 +606,7 @@ class S7MonitorApp(App):
         """Execute a confirmed write to the PLC."""
         log = self.query_one("#log-panel", RichLog)
         try:
-            self._connection.db_write(pending.db, pending.offset, pending.data)
+            self._connection.area_write(pending.area, pending.offset, pending.data, db=pending.db)
             hex_str = " ".join(f"{b:02X}" for b in pending.data)
             self.call_from_thread(log.write, f"[green]✓ {pending.description} [{hex_str}][/green]")
             self.call_from_thread(self._do_read)
@@ -607,6 +656,7 @@ class S7MonitorApp(App):
                 hex_bytes = bytearray(int(b, 16) for b in parts[3:])
                 pending = PendingWrite(
                     description=f"Raw write to DB{db} at offset {offset}",
+                    area=S7Area.DB,
                     db=db,
                     offset=offset,
                     data=hex_bytes,
@@ -616,20 +666,21 @@ class S7MonitorApp(App):
                 self.call_from_thread(log.write, f"[red]Write command parse error: {e}[/red]")
 
         elif command == "set" and len(parts) >= 3:
-            # set <var_spec> <value>
+            # set <var_spec> <value>  (supports DB and area specs)
             try:
                 var = S7Variable.parse(parts[1])
                 value_text = " ".join(parts[2:])
                 parsed = var.parse_input(value_text)
 
                 if var.type == S7Type.BIT:
-                    result = self._connection.db_read(var.db, var.offset, 1)
+                    result = self._connection.area_read(var.area, var.offset, 1, db=var.db)
                     encoded = var.encode_bit(result.data[0], parsed)
                 else:
                     encoded = var.encode(parsed)
 
                 pending = PendingWrite(
                     description=f"Set {var.spec} = {parsed}",
+                    area=var.area,
                     db=var.db,
                     offset=var.offset,
                     data=encoded,

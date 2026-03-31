@@ -1,7 +1,7 @@
 """S7 PLC connection management for the monitor tool.
 
 Provides a clean interface over python-snap7 for reading and writing
-DB areas, with connection state tracking and reconnection support.
+DB, EB, AB, MB, CT, and TM areas, with connection state tracking.
 """
 
 from __future__ import annotations
@@ -13,6 +13,8 @@ from threading import Lock
 from typing import Protocol
 
 import snap7
+
+from .variable import S7Area
 
 
 class ConnectionState(Enum):
@@ -38,7 +40,8 @@ class ConnectionConfig:
 @dataclass
 class ReadResult:
     data: bytearray
-    db: int
+    area: S7Area
+    db: int  # 0 for non-DB areas
     start: int
     size: int
     timestamp: float = field(default_factory=time.monotonic)
@@ -53,6 +56,16 @@ class S7ClientProtocol(Protocol):
     def disconnect(self) -> int: ...
     def db_read(self, db_number: int, start: int, size: int) -> bytearray: ...
     def db_write(self, db_number: int, start: int, data: bytearray) -> int: ...
+    def eb_read(self, start: int, size: int) -> bytearray: ...
+    def eb_write(self, start: int, size: int, data: bytearray) -> int: ...
+    def ab_read(self, start: int, size: int) -> bytearray: ...
+    def ab_write(self, start: int, data: bytearray) -> int: ...
+    def mb_read(self, start: int, size: int) -> bytearray: ...
+    def mb_write(self, start: int, size: int, data: bytearray) -> int: ...
+    def ct_read(self, start: int, amount: int) -> bytearray: ...
+    def ct_write(self, start: int, amount: int, data: bytearray) -> int: ...
+    def tm_read(self, start: int, amount: int) -> bytearray: ...
+    def tm_write(self, start: int, amount: int, data: bytearray) -> int: ...
 
 
 class S7Connection:
@@ -116,13 +129,35 @@ class S7Connection:
 
     def db_read(self, db: int, start: int, size: int) -> ReadResult:
         """Read a range of bytes from a DB."""
+        return self.area_read(S7Area.DB, start, size, db=db)
+
+    def db_write(self, db: int, start: int, data: bytearray) -> None:
+        """Write bytes to a DB."""
+        self.area_write(S7Area.DB, start, data, db=db)
+
+    def area_read(self, area: S7Area, start: int, size: int, db: int = 0) -> ReadResult:
+        """Read a range of bytes from any S7 memory area."""
         with self._lock:
             if not self.connected:
                 raise ConnectionError("Not connected")
             try:
-                data = self._client.db_read(db, start, size)
+                if area == S7Area.DB:
+                    raw = self._client.db_read(db, start, size)
+                elif area == S7Area.EB:
+                    raw = self._client.eb_read(start, size)
+                elif area == S7Area.AB:
+                    raw = self._client.ab_read(start, size)
+                elif area == S7Area.MB:
+                    raw = self._client.mb_read(start, size)
+                elif area == S7Area.CT:
+                    raw = self._client.ct_read(start, size)
+                elif area == S7Area.TM:
+                    raw = self._client.tm_read(start, size)
+                else:
+                    raise ValueError(f"Unsupported area: {area}")
                 return ReadResult(
-                    data=bytearray(data),
+                    data=bytearray(raw),
+                    area=area,
                     db=db,
                     start=start,
                     size=size,
@@ -132,13 +167,26 @@ class S7Connection:
                 self._error = str(e)
                 raise
 
-    def db_write(self, db: int, start: int, data: bytearray) -> None:
-        """Write bytes to a DB."""
+    def area_write(self, area: S7Area, start: int, data: bytearray, db: int = 0) -> None:
+        """Write bytes to any S7 memory area."""
         with self._lock:
             if not self.connected:
                 raise ConnectionError("Not connected")
             try:
-                self._client.db_write(db, start, data)
+                if area == S7Area.DB:
+                    self._client.db_write(db, start, data)
+                elif area == S7Area.EB:
+                    self._client.eb_write(start, len(data), data)
+                elif area == S7Area.AB:
+                    self._client.ab_write(start, data)
+                elif area == S7Area.MB:
+                    self._client.mb_write(start, len(data), data)
+                elif area == S7Area.CT:
+                    self._client.ct_write(start, len(data), data)
+                elif area == S7Area.TM:
+                    self._client.tm_write(start, len(data), data)
+                else:
+                    raise ValueError(f"Unsupported area: {area}")
             except Exception as e:
                 self._state = ConnectionState.ERROR
                 self._error = str(e)

@@ -2,6 +2,7 @@ import struct
 import pytest
 
 from s7pymon.variable import (
+    S7Area,
     S7Type,
     S7Variable,
     compute_read_range,
@@ -271,7 +272,7 @@ class TestComputeReadRange:
             S7Variable.parse("DB100.Byte0"),
             S7Variable.parse("DB200.Byte0"),
         ]
-        with pytest.raises(ValueError, match="multiple DBs"):
+        with pytest.raises(ValueError, match="multiple areas"):
             compute_read_range(vars)
 
 
@@ -292,3 +293,74 @@ class TestExtractValue:
         data = bytearray(3)
         with pytest.raises(ValueError, match="not within read range"):
             extract_value(v, data, data_start=0)
+
+
+class TestS7AreaParsing:
+    def test_parse_eb(self):
+        v = S7Variable.parse("EB.Byte0")
+        assert v.area == S7Area.EB
+        assert v.db == 0
+        assert v.type == S7Type.BYTE
+        assert v.offset == 0
+        assert v.spec == "EB.Byte0"
+
+    def test_parse_ab(self):
+        v = S7Variable.parse("AB.Byte2")
+        assert v.area == S7Area.AB
+        assert v.spec == "AB.Byte2"
+
+    def test_parse_mb(self):
+        v = S7Variable.parse("MB.Byte0")
+        assert v.area == S7Area.MB
+
+    def test_parse_ct(self):
+        v = S7Variable.parse("CT.Word0")
+        assert v.area == S7Area.CT
+        assert v.type == S7Type.WORD
+
+    def test_parse_tm(self):
+        v = S7Variable.parse("TM.Word0")
+        assert v.area == S7Area.TM
+
+    def test_parse_eb_bit(self):
+        v = S7Variable.parse("EB.Bit0.3")
+        assert v.area == S7Area.EB
+        assert v.type == S7Type.BIT
+        assert v.extra == 3
+        assert v.spec == "EB.Bit0.3"
+
+    def test_parse_eb_case_insensitive(self):
+        v = S7Variable.parse("eb.byte0")
+        assert v.area == S7Area.EB
+
+    def test_db_default_area(self):
+        v = S7Variable.parse("DB200.Byte0")
+        assert v.area == S7Area.DB
+
+    def test_area_with_label(self):
+        v = S7Variable.parse("EB.Byte0", label="input0")
+        assert v.label == "input0"
+        assert v.display_name == "input0"
+
+    def test_mixed_areas_in_compute_read_range_raises(self):
+        vars = [
+            S7Variable.parse("DB100.Byte0"),
+            S7Variable.parse("EB.Byte0"),
+        ]
+        with pytest.raises(ValueError, match="multiple areas"):
+            compute_read_range(vars)
+
+    def test_same_area_compute_read_range(self):
+        vars = [
+            S7Variable.parse("EB.Byte0"),
+            S7Variable.parse("EB.Byte4"),
+        ]
+        start, size = compute_read_range(vars)
+        assert start == 0
+        assert size == 5
+
+    def test_area_description(self):
+        assert S7Area.EB.description == "Process Input"
+        assert S7Area.AB.description == "Process Output"
+        assert S7Area.MB.description == "Merker/Flag"
+        assert S7Area.DB.description == "Data Block"

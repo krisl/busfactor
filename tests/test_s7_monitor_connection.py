@@ -7,6 +7,7 @@ from s7pymon.connection import (
     ReadResult,
     S7Connection,
 )
+from s7pymon.variable import S7Area
 
 
 @pytest.fixture
@@ -132,3 +133,69 @@ class TestS7Connection:
         connection.connect()
         # Check that set_param was called for timeouts
         assert mock_client.set_param.call_count == 3
+
+
+class TestS7ConnectionAreaReadWrite:
+    @pytest.fixture
+    def mock_client(self):
+        client = MagicMock()
+        client.get_connected.return_value = True
+        client.connect.return_value = 0
+        client.eb_read.return_value = bytearray(b"\xAA\xBB")
+        client.ab_read.return_value = bytearray(b"\xCC\xDD")
+        client.mb_read.return_value = bytearray(b"\xEE\xFF")
+        return client
+
+    @pytest.fixture
+    def connection(self, mock_client):
+        config = ConnectionConfig(address="10.0.0.1")
+        conn = S7Connection(config, client=mock_client)
+        conn.connect()
+        return conn
+
+    def test_area_read_eb(self, connection, mock_client):
+        result = connection.area_read(S7Area.EB, start=0, size=2)
+        assert result.data == bytearray(b"\xAA\xBB")
+        assert result.area == S7Area.EB
+        assert result.db == 0
+        mock_client.eb_read.assert_called_once_with(0, 2)
+
+    def test_area_read_ab(self, connection, mock_client):
+        result = connection.area_read(S7Area.AB, start=0, size=2)
+        assert result.data == bytearray(b"\xCC\xDD")
+        mock_client.ab_read.assert_called_once_with(0, 2)
+
+    def test_area_read_mb(self, connection, mock_client):
+        result = connection.area_read(S7Area.MB, start=0, size=2)
+        mock_client.mb_read.assert_called_once_with(0, 2)
+
+    def test_area_read_db_delegates(self, connection, mock_client):
+        mock_client.db_read.return_value = bytearray(b"\x01")
+        result = connection.area_read(S7Area.DB, start=0, size=1, db=210)
+        mock_client.db_read.assert_called_once_with(210, 0, 1)
+        assert result.area == S7Area.DB
+        assert result.db == 210
+
+    def test_area_write_eb(self, connection, mock_client):
+        connection.area_write(S7Area.EB, start=0, data=bytearray(b"\x01"))
+        mock_client.eb_write.assert_called_once_with(0, 1, bytearray(b"\x01"))
+
+    def test_area_write_ab(self, connection, mock_client):
+        connection.area_write(S7Area.AB, start=0, data=bytearray(b"\x01"))
+        mock_client.ab_write.assert_called_once_with(0, bytearray(b"\x01"))
+
+    def test_area_write_db_delegates(self, connection, mock_client):
+        connection.area_write(S7Area.DB, start=5, data=bytearray(b"\xFF"), db=210)
+        mock_client.db_write.assert_called_once_with(210, 5, bytearray(b"\xFF"))
+
+    def test_area_read_not_connected(self, mock_client):
+        config = ConnectionConfig(address="10.0.0.1")
+        conn = S7Connection(config, client=mock_client)
+        # Don't connect
+        with pytest.raises(ConnectionError, match="Not connected"):
+            conn.area_read(S7Area.EB, 0, 2)
+
+    def test_db_read_returns_area_field(self, connection, mock_client):
+        mock_client.db_read.return_value = bytearray(b"\x01")
+        result = connection.db_read(db=210, start=0, size=1)
+        assert result.area == S7Area.DB

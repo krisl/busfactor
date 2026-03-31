@@ -1,7 +1,7 @@
 """S7 variable specification parsing and value conversion.
 
 Supports variable specs like Sharp7.Monitor format:
-  DB200.Byte0     - unsigned byte at offset 0
+  DB200.Byte0     - unsigned byte at offset 0 of data block 200
   DB200.Int4      - signed 16-bit integer at offset 4
   DB200.DInt8     - signed 32-bit integer at offset 8
   DB200.Word2     - unsigned 16-bit integer at offset 2
@@ -9,6 +9,13 @@ Supports variable specs like Sharp7.Monitor format:
   DB200.Real12    - 32-bit float at offset 12
   DB200.Bit0.3    - bit 3 of byte at offset 0
   DB200.String50.20 - string at offset 50, max length 20
+
+Also supports S7 area addressing:
+  EB.Byte0        - process image input byte at offset 0
+  AB.Byte2        - process image output byte at offset 2
+  MB.Byte0        - merker/flag byte at offset 0
+  CT.Word0        - counter at offset 0
+  TM.Word0        - timer at offset 0
 """
 
 from __future__ import annotations
@@ -18,6 +25,31 @@ import struct
 from dataclasses import dataclass
 from enum import Enum
 from typing import Union
+
+
+class S7Area(Enum):
+    """S7 PLC memory area types."""
+
+    DB = "DB"    # Data Blocks
+    EB = "EB"    # Process Image Input  (Eingangsbereich / PE)
+    AB = "AB"    # Process Image Output (Ausgangsbereich / PA)
+    MB = "MB"    # Merkers / Flags      (Merkerbereich / MK)
+    CT = "CT"    # Counters
+    TM = "TM"    # Timers
+
+    @property
+    def description(self) -> str:
+        return _AREA_DESCRIPTIONS[self]
+
+
+_AREA_DESCRIPTIONS: dict[S7Area, str] = {
+    S7Area.DB: "Data Block",
+    S7Area.EB: "Process Input",
+    S7Area.AB: "Process Output",
+    S7Area.MB: "Merker/Flag",
+    S7Area.CT: "Counter",
+    S7Area.TM: "Timer",
+}
 
 
 class S7Type(Enum):
@@ -61,8 +93,14 @@ _TYPE_FORMATS: dict[S7Type, str] = {
 }
 
 # Pattern: DB<num>.<Type><offset>[.<extra>]
-_VAR_PATTERN = re.compile(
+_DB_VAR_PATTERN = re.compile(
     r"^DB(\d+)\.(Byte|Int|DInt|Word|DWord|Real|Bit|String)(\d+)(?:\.(\d+))?$",
+    re.IGNORECASE,
+)
+
+# Pattern: <Area>.<Type><offset>[.<extra>]  (for EB, AB, MB, CT, TM)
+_AREA_VAR_PATTERN = re.compile(
+    r"^(EB|AB|MB|CT|TM)\.(Byte|Int|DInt|Word|DWord|Real|Bit|String)(\d+)(?:\.(\d+))?$",
     re.IGNORECASE,
 )
 
@@ -71,16 +109,20 @@ _VAR_PATTERN = re.compile(
 class S7Variable:
     """Parsed S7 variable specification."""
 
-    db: int
+    db: int  # DB number for DB area; 0 for non-DB areas
     type: S7Type
     offset: int
     extra: int | None = None  # bit number for Bit, max length for String
     label: str | None = None  # optional human-readable name
+    area: S7Area = S7Area.DB  # memory area
 
     @property
     def spec(self) -> str:
-        """Canonical spec string like DB200.Byte0."""
-        base = f"DB{self.db}.{self.type.value}{self.offset}"
+        """Canonical spec string like DB200.Byte0 or EB.Byte0."""
+        if self.area == S7Area.DB:
+            base = f"DB{self.db}.{self.type.value}{self.offset}"
+        else:
+            base = f"{self.area.value}.{self.type.value}{self.offset}"
         if self.extra is not None:
             return f"{base}.{self.extra}"
         return base
@@ -104,19 +146,39 @@ class S7Variable:
 
     @classmethod
     def parse(cls, spec: str, label: str | None = None) -> S7Variable:
-        """Parse a variable spec string like DB200.Byte0 or DB200.Bit0.3."""
-        m = _VAR_PATTERN.match(spec)
-        if not m:
-            raise ValueError(
-                f"Invalid variable spec: {spec!r}. "
-                f"Expected format: DB<num>.<Type><offset>[.<extra>] "
-                f"e.g. DB200.Byte0, DB200.Bit0.3"
-            )
-        db = int(m.group(1))
-        type_name = m.group(2)
-        offset = int(m.group(3))
-        extra_str = m.group(4)
-        extra = int(extra_str) if extra_str is not None else None
+        """Parse a variable spec string.
+
+        Supports:
+            DB200.Byte0, DB200.Bit0.3  (data block)
+            EB.Byte0, AB.Byte2, MB.Bit0.3  (area addressing)
+        """
+        # Try DB pattern first
+        m = _DB_VAR_PATTERN.match(spec)
+        if m:
+            db = int(m.group(1))
+            type_name = m.group(2)
+            offset = int(m.group(3))
+            extra_str = m.group(4)
+            extra = int(extra_str) if extra_str is not None else None
+            area = S7Area.DB
+        else:
+            # Try area pattern
+            m = _AREA_VAR_PATTERN.match(spec)
+            if not m:
+                raise ValueError(
+                    f"Invalid variable spec: {spec!r}. "
+                    f"Expected format: DB<num>.<Type><offset>[.<extra>] "
+                    f"or <Area>.<Type><offset>[.<extra>] "
+                    f"e.g. DB200.Byte0, EB.Byte0, MB.Bit0.3"
+                )
+            area_name = m.group(1)
+            area_map = {a.value.lower(): a for a in S7Area}
+            area = area_map[area_name.lower()]
+            db = 0
+            type_name = m.group(2)
+            offset = int(m.group(3))
+            extra_str = m.group(4)
+            extra = int(extra_str) if extra_str is not None else None
 
         # Normalize type name to match enum (case-insensitive input)
         type_map = {t.value.lower(): t for t in S7Type}
@@ -131,7 +193,7 @@ class S7Variable:
         if s7_type == S7Type.STRING and extra is None:
             raise ValueError(f"String variable requires max length: {spec} (e.g. DB200.String50.20)")
 
-        return cls(db=db, type=s7_type, offset=offset, extra=extra, label=label)
+        return cls(db=db, type=s7_type, offset=offset, extra=extra, label=label, area=area)
 
     def decode(self, data: bytes | bytearray) -> Union[int, float, bool, str]:
         """Decode raw bytes into a Python value."""
@@ -222,17 +284,18 @@ class S7Variable:
 
 
 def compute_read_range(variables: list[S7Variable]) -> tuple[int, int]:
-    """Compute the minimal (start, size) to cover all variables in a single DB read.
+    """Compute the minimal (start, size) to cover all variables in a single read.
 
-    All variables must be in the same DB.
+    All variables must be in the same area (and same DB if DB area).
     Returns (start_offset, byte_count).
     """
     if not variables:
         raise ValueError("No variables provided")
 
-    dbs = {v.db for v in variables}
-    if len(dbs) > 1:
-        raise ValueError(f"Variables span multiple DBs: {dbs}")
+    areas = {(v.area, v.db) for v in variables}
+    if len(areas) > 1:
+        area_strs = {f"{a.value}" + (f"{db}" if a == S7Area.DB else "") for a, db in areas}
+        raise ValueError(f"Variables span multiple areas/DBs: {area_strs}")
 
     min_offset = min(v.offset for v in variables)
     max_end = max(v.offset + v.byte_size for v in variables)

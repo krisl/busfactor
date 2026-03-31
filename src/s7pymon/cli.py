@@ -1,40 +1,48 @@
 #!/usr/bin/env python3
-"""CLI entry point for the S7 Monitor TUI.
+"""CLI entry point for s7pymon — S7 PLC Monitor TUI.
 
 Usage:
-    s7mon <ip> [variables...] [OPTIONS]
+    s7pymon <ip> [variables...] [OPTIONS]
 
 Examples:
-    # Monitor specific variables
-    s7mon 192.168.1.100 DB210.Byte0 DB210.Byte1 DB210.Int4
+    # Monitor specific DB variables
+    s7pymon 192.168.1.100 DB210.Byte0 DB210.Byte1 DB210.Int4
 
     # Monitor a raw DB range
-    s7mon 192.168.1.100 --db 210 --start 0 --size 18
+    s7pymon 192.168.1.100 --db 210 --start 0 --size 18
 
     # With named variables
-    s7mon 192.168.1.100 DB210.Byte0:heartbeat DB210.Byte1:status DB210.Bit1.0:e_stop
+    s7pymon 192.168.1.100 DB210.Byte0:heartbeat DB210.Byte1:status DB210.Bit1.0:e_stop
+
+    # Monitor DB and process inputs simultaneously
+    s7pymon 192.168.1.100 DB210.Byte0 EB.Byte0 EB.Byte1
+
+    # Monitor process outputs and merkers
+    s7pymon 192.168.1.100 AB.Byte0:output0 MB.Byte0:flag0
 
     # Custom connection settings
-    s7mon 192.168.1.100 --rack 0 --slot 2 --port 1102 DB210.Byte0
+    s7pymon 192.168.1.100 --rack 0 --slot 2 --port 1102 DB210.Byte0
 
     # Fast polling
-    s7mon 192.168.1.100 --interval 0.25 DB210.Byte0 DB210.Byte1
+    s7pymon 192.168.1.100 --interval 0.25 DB210.Byte0 DB210.Byte1
 """
 
 import sys
+from collections import defaultdict
 
 import click
 
 from .connection import ConnectionConfig, S7Connection
-from .variable import S7Type, S7Variable, compute_read_range
+from .variable import S7Area, S7Type, S7Variable, compute_read_range
 
 
 def parse_variable_arg(arg: str) -> S7Variable:
     """Parse a CLI variable argument, supporting optional label syntax.
 
     Formats:
-        DB200.Byte0           -> variable with no label
-        DB200.Byte0:heartbeat -> variable with label "heartbeat"
+        DB200.Byte0           -> DB variable with no label
+        DB200.Byte0:heartbeat -> DB variable with label "heartbeat"
+        EB.Byte0:input0       -> process input variable with label
     """
     if ":" in arg:
         spec, label = arg.split(":", 1)
@@ -48,6 +56,26 @@ def build_default_variables(db: int, start: int, size: int) -> list[S7Variable]:
         S7Variable(db=db, type=S7Type.BYTE, offset=start + i, label=f"byte_{i}")
         for i in range(size)
     ]
+
+
+def build_read_groups(variables: list[S7Variable]):
+    """Group variables by area+db and compute read ranges for each group.
+
+    Returns list of ReadGroup (imported lazily from app).
+    """
+    from .app import ReadGroup
+
+    # Group by (area, db)
+    groups: dict[tuple[S7Area, int], list[S7Variable]] = defaultdict(list)
+    for var in variables:
+        groups[(var.area, var.db)].append(var)
+
+    read_groups = []
+    for (area, db), group_vars in groups.items():
+        start, size = compute_read_range(group_vars)
+        read_groups.append(ReadGroup(area=area, db=db, start=start, size=size))
+
+    return read_groups
 
 
 @click.command(context_settings={"help_option_names": ["-h", "--help"]})
@@ -73,28 +101,34 @@ def main(
     db_start: int,
     db_size: int | None,
 ) -> None:
-    """S7 Monitor — Live PLC data block monitor.
+    """s7pymon — Live S7 PLC data monitor.
 
     ADDRESS is the IP address of the S7 PLC.
 
-    VARIABLES are optional variable specs like DB210.Byte0 or DB210.Bit1.0:e_stop.
-    Append :label to name a variable (e.g. DB210.Byte0:heartbeat).
+    VARIABLES are variable specs. Append :label to name them.
 
     \b
-    Supported types:
-      Byte, Int, DInt, Word, DWord, Real, Bit, String
+    Supported areas and types:
+      DB<n>.Type<offset>  — Data Block (DB210.Byte0, DB210.Int4)
+      EB.Type<offset>     — Process Image Input  (EB.Byte0, EB.Bit0.3)
+      AB.Type<offset>     — Process Image Output (AB.Byte0)
+      MB.Type<offset>     — Merkers / Flags      (MB.Byte100)
+      CT.Type<offset>     — Counters             (CT.Word0)
+      TM.Type<offset>     — Timers               (TM.Word0)
+
+    \b
+    Types: Byte, Int, DInt, Word, DWord, Real, Bit, String
 
     \b
     Keyboard shortcuts in the TUI:
-      e       Edit selected variable
-      Space   Toggle bit variable
-      :       Command bar (write/set/read)
+      e       Edit selected variable (with confirmation)
+      Space   Toggle bit variable (with confirmation)
+      :       Command bar (write/set/read, with confirmation)
       r       Force refresh
       p       Pause/resume polling
       c       Reconnect
       q       Quit
     """
-    # Lazy import to keep CLI startup fast
     from .app import S7MonitorApp
 
     config = ConnectionConfig(
@@ -107,7 +141,6 @@ def main(
     connection = S7Connection(config)
 
     if variables:
-        # Parse variable specs from command line
         parsed_vars = []
         for v in variables:
             try:
@@ -116,40 +149,35 @@ def main(
                 click.echo(f"Error parsing variable '{v}': {e}", err=True)
                 sys.exit(1)
 
-        # All variables must be in the same DB
-        dbs = {v.db for v in parsed_vars}
-        if len(dbs) > 1:
-            click.echo(f"Error: All variables must be in the same DB. Found: {dbs}", err=True)
-            sys.exit(1)
+        # If explicit --db/--size given, extend the DB read range
+        if db_number is not None:
+            db_vars = [v for v in parsed_vars if v.area == S7Area.DB]
+            db_dbs = {v.db for v in db_vars}
+            if db_dbs and db_number not in db_dbs:
+                click.echo(f"Error: --db {db_number} conflicts with variable DBs {db_dbs}", err=True)
+                sys.exit(1)
 
-        db = next(iter(dbs))
-        start, size = compute_read_range(parsed_vars)
+        read_groups = build_read_groups(parsed_vars)
 
-        # If explicit --db/--size given, use those to extend the read range
-        if db_number is not None and db_number != db:
-            click.echo(f"Error: --db {db_number} conflicts with variable DB{db}", err=True)
-            sys.exit(1)
+        # Extend DB read range if --size specified
         if db_size is not None:
-            size = max(size, db_size)
-            start = min(start, db_start)
+            for group in read_groups:
+                if group.area == S7Area.DB and (db_number is None or group.db == db_number):
+                    group.size = max(group.size, db_size)
+                    group.start = min(group.start, db_start)
 
     elif db_number is not None and db_size is not None:
-        # Raw range mode
-        db = db_number
-        start = db_start
-        size = db_size
-        parsed_vars = build_default_variables(db, start, size)
+        parsed_vars = build_default_variables(db_number, db_start, db_size)
+        read_groups = build_read_groups(parsed_vars)
     else:
         click.echo("Error: Provide variable specs or --db and --size for raw range mode.", err=True)
-        click.echo("Try: s7mon --help", err=True)
+        click.echo("Try: s7pymon --help", err=True)
         sys.exit(1)
 
     app = S7MonitorApp(
         connection=connection,
         variables=parsed_vars,
-        db=db,
-        start=start,
-        size=size,
+        read_groups=read_groups,
         poll_interval=interval,
     )
     app.run()
