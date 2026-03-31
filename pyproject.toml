@@ -14,6 +14,9 @@ dependencies = [
     "textual>=3.0",
 ]
 
+[project.scripts]
+s7mon = "s7pymon.cli:cli"
+
 [build-system]
 requires = ["uv_build>=0.10.8,<0.11.0"]
 build-backend = "uv_build"
