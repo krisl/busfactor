@@ -32,6 +32,7 @@ from collections import defaultdict
 
 import click
 
+from .config import S7MonitorConfig
 from .connection import ConnectionConfig, S7Connection
 from .variable import S7Area, S7Type, S7Variable, compute_read_range
 
@@ -79,36 +80,38 @@ def build_read_groups(variables: list[S7Variable]):
 
 
 @click.command(context_settings={"help_option_names": ["-h", "--help"]})
-@click.argument("address")
+@click.argument("address", required=False, default=None)
 @click.argument("variables", nargs=-1)
-@click.option("-r", "--rack", default=0, help="Rack number of S7 instance.")
-@click.option("-s", "--slot", default=2, help="Slot number of S7 instance.")
-@click.option("-p", "--port", default=102, help="TCP port for S7 communication.")
-@click.option("-t", "--timeout", default=3000, help="Connection timeout in ms.")
-@click.option("-i", "--interval", default=1.0, help="Poll interval in seconds.")
+@click.option("-c", "--config", "config_file", default=None, type=click.Path(), help="YAML config file.")
+@click.option("-r", "--rack", default=None, type=int, help="Rack number (default: 0).")
+@click.option("-s", "--slot", default=None, type=int, help="Slot number (default: 2).")
+@click.option("-p", "--port", default=None, type=int, help="TCP port (default: 102).")
+@click.option("-t", "--timeout", default=None, type=int, help="Connection timeout in ms (default: 3000).")
+@click.option("-i", "--interval", default=None, type=float, help="Poll interval in seconds (default: 1.0).")
 @click.option("--db", "db_number", default=None, type=int, help="DB number for raw range mode.")
-@click.option("--start", "db_start", default=0, type=int, help="Start offset for raw range mode.")
+@click.option("--start", "db_start", default=None, type=int, help="Start offset for raw range mode.")
 @click.option("--size", "db_size", default=None, type=int, help="Number of bytes for raw range mode.")
 @click.option(
     "-w",
     "--write-mode",
     "write_mode",
     type=click.Choice(["disabled", "confirm", "allowed"], case_sensitive=False),
-    default="disabled",
+    default=None,
     help="Write permission mode (default: disabled).",
 )
 def main(
-    address: str,
+    address: str | None,
     variables: tuple[str, ...],
-    rack: int,
-    slot: int,
-    port: int,
-    timeout: int,
-    interval: float,
+    config_file: str | None,
+    rack: int | None,
+    slot: int | None,
+    port: int | None,
+    timeout: int | None,
+    interval: float | None,
     db_number: int | None,
-    db_start: int,
+    db_start: int | None,
     db_size: int | None,
-    write_mode: str,
+    write_mode: str | None,
 ) -> None:
     """s7pymon — Live S7 PLC data monitor.
 
@@ -140,20 +143,57 @@ def main(
     """
     from .app import S7MonitorApp, WriteMode
 
-    wm = WriteMode(write_mode.lower())
+    # Load config file if specified, then merge CLI overrides
+    if config_file:
+        try:
+            cfg = S7MonitorConfig.from_yaml(config_file)
+        except (FileNotFoundError, ValueError) as e:
+            click.echo(f"Error loading config: {e}", err=True)
+            sys.exit(1)
+    else:
+        cfg = S7MonitorConfig()
 
-    config = ConnectionConfig(
+    cfg = cfg.merge_cli(
         address=address,
         rack=rack,
         slot=slot,
-        tcp_port=port,
-        timeout_ms=timeout,
+        port=port,
+        timeout=timeout,
+        interval=interval,
+        write_mode=write_mode,
+        db_number=db_number,
+        db_start=db_start,
+        db_size=db_size,
+        variables=variables,
     )
-    connection = S7Connection(config)
 
-    if variables:
+    # Resolve defaults for values that weren't set anywhere
+    final_address = cfg.address
+    if not final_address:
+        click.echo("Error: ADDRESS is required (as argument or in config file).", err=True)
+        sys.exit(1)
+
+    final_rack = cfg.rack if cfg.rack is not None else 0
+    final_slot = cfg.slot if cfg.slot is not None else 2
+    final_port = cfg.port if cfg.port is not None else 102
+    final_timeout = cfg.timeout if cfg.timeout is not None else 3000
+    final_interval = cfg.interval if cfg.interval is not None else 1.0
+    final_write_mode = WriteMode(cfg.write_mode.lower()) if cfg.write_mode else WriteMode.DISABLED
+
+    conn_config = ConnectionConfig(
+        address=final_address,
+        rack=final_rack,
+        slot=final_slot,
+        tcp_port=final_port,
+        timeout_ms=final_timeout,
+    )
+    connection = S7Connection(conn_config)
+
+    all_variables = cfg.variables
+
+    if all_variables:
         parsed_vars = []
-        for v in variables:
+        for v in all_variables:
             try:
                 parsed_vars.append(parse_variable_arg(v))
             except ValueError as e:
@@ -161,24 +201,26 @@ def main(
                 sys.exit(1)
 
         # If explicit --db/--size given, extend the DB read range
-        if db_number is not None:
+        if cfg.db is not None:
             db_vars = [v for v in parsed_vars if v.area == S7Area.DB]
             db_dbs = {v.db for v in db_vars}
-            if db_dbs and db_number not in db_dbs:
-                click.echo(f"Error: --db {db_number} conflicts with variable DBs {db_dbs}", err=True)
+            if db_dbs and cfg.db not in db_dbs:
+                click.echo(f"Error: --db {cfg.db} conflicts with variable DBs {db_dbs}", err=True)
                 sys.exit(1)
 
         read_groups = build_read_groups(parsed_vars)
 
         # Extend DB read range if --size specified
-        if db_size is not None:
+        if cfg.size is not None:
+            db_start_val = cfg.start if cfg.start is not None else 0
             for group in read_groups:
-                if group.area == S7Area.DB and (db_number is None or group.db == db_number):
-                    group.size = max(group.size, db_size)
-                    group.start = min(group.start, db_start)
+                if group.area == S7Area.DB and (cfg.db is None or group.db == cfg.db):
+                    group.size = max(group.size, cfg.size)
+                    group.start = min(group.start, db_start_val)
 
-    elif db_number is not None and db_size is not None:
-        parsed_vars = build_default_variables(db_number, db_start, db_size)
+    elif cfg.db is not None and cfg.size is not None:
+        db_start_val = cfg.start if cfg.start is not None else 0
+        parsed_vars = build_default_variables(cfg.db, db_start_val, cfg.size)
         read_groups = build_read_groups(parsed_vars)
     else:
         click.echo("Error: Provide variable specs or --db and --size for raw range mode.", err=True)
@@ -189,8 +231,8 @@ def main(
         connection=connection,
         variables=parsed_vars,
         read_groups=read_groups,
-        poll_interval=interval,
-        write_mode=wm,
+        poll_interval=final_interval,
+        write_mode=final_write_mode,
     )
     app.run()
 
