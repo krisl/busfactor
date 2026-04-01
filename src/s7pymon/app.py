@@ -137,6 +137,7 @@ class EditVariableScreen(ModalScreen[str | None]):
     CSS = """
     EditVariableScreen {
         align: center middle;
+        background: $surface 30%;
     }
     #edit-dialog {
         width: 60;
@@ -207,6 +208,7 @@ class CommandBarScreen(ModalScreen[str | None]):
     CSS = """
     CommandBarScreen {
         align: center bottom;
+        background: $surface 30%;
     }
     #cmd-bar {
         width: 100%;
@@ -254,6 +256,7 @@ class ConfirmWriteScreen(ModalScreen[bool]):
     CSS = """
     ConfirmWriteScreen {
         align: center middle;
+        background: $surface 30%;
     }
     #confirm-dialog {
         width: 70;
