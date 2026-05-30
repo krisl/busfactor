@@ -401,7 +401,7 @@ class S7MonitorApp(App):
         self._log_file = log_file
         self._log_format = log_format
         self._data_logger: DataLogger | None = None
-        self._current_data: dict[str, bytearray] = {}  # keyed by group label
+        self._current_data: dict[str, tuple[bytearray, int]] = {}  # keyed by group label
         self._current_values: dict[str, str] = {}
         self._previous_values: dict[str, str] = {}
         self._poll_count = 0
@@ -648,6 +648,8 @@ class S7MonitorApp(App):
             parsed = var.parse_input(text)
 
             if var.type == S7Type.BIT:
+                if not isinstance(parsed, bool):
+                    raise TypeError("Bit writes require a boolean value")
                 result = self._connection.area_read(var.area, var.offset, 1, db=var.db)
                 encoded = var.encode_bit(result.data[0], parsed)
             else:
@@ -678,7 +680,7 @@ class S7MonitorApp(App):
         self._pending_write = pending
         self.push_screen(ConfirmWriteScreen(pending), self._on_confirm_result)
 
-    def _on_confirm_result(self, confirmed: bool) -> None:
+    def _on_confirm_result(self, confirmed: bool | None) -> None:
         """Handle confirmation dialog result."""
         if not confirmed or self._pending_write is None:
             log = self.query_one("#log-panel", RichLog)
@@ -764,6 +766,8 @@ class S7MonitorApp(App):
                 parsed = var.parse_input(value_text)
 
                 if var.type == S7Type.BIT:
+                    if not isinstance(parsed, bool):
+                        raise TypeError("Bit writes require a boolean value")
                     result = self._connection.area_read(var.area, var.offset, 1, db=var.db)
                     encoded = var.encode_bit(result.data[0], parsed)
                 else:

@@ -172,7 +172,7 @@ class S7Variable:
                     f"e.g. DB200.Byte0, EB.Byte0, MB.Bit0.3"
                 )
             area_name = m.group(1)
-            area_map = {a.value.lower(): a for a in S7Area}
+            area_map: dict[str, S7Area] = {str(a.value).lower(): a for a in S7Area}
             area = area_map[area_name.lower()]
             db = 0
             type_name = m.group(2)
@@ -181,7 +181,7 @@ class S7Variable:
             extra = int(extra_str) if extra_str is not None else None
 
         # Normalize type name to match enum (case-insensitive input)
-        type_map = {t.value.lower(): t for t in S7Type}
+        type_map: dict[str, S7Type] = {str(t.value).lower(): t for t in S7Type}
         s7_type = type_map[type_name.lower()]
 
         # Validation
