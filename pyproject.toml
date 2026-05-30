@@ -1,0 +1,33 @@
+[project]
+name = "s7pymon"
+version = "0.1.0"
+description = "S7 PLC monitor and log replay TUI"
+readme = "README.md"
+authors = [
+    { name = "Aaron", email = "akl@riact.eu" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "click>=8.1",
+    "python-snap7>=2.0",
+    "pyyaml>=6.0",
+    "textual>=3.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.10.8,<0.11.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "ty>=0.0.40",
+]
+
+[tool.pytest.ini_options]
+addopts = "--strict-markers"
+testpaths = ["tests"]
+
+[tool.ty]
+src.exclude = ["tests"]
+environment.root = ["."]
