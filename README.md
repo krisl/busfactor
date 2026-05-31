@@ -12,6 +12,7 @@ Built with **Textual** + **python-snap7**.
 - **Named variables** — label any address with `:name` syntax
 - **Write with confirmation** — edit values, toggle bits, or use the command bar; all writes require explicit confirmation
 - **Keyboard-driven** — no mouse needed
+- **Web dashboard** — an ultra-modern browser UI streaming live data over Server-Sent Events (`s7pymon-web`), with zero extra dependencies
 
 ## Requirements
 
@@ -130,6 +131,58 @@ read                  — Force a read cycle
 
 All write operations pop up a confirmation dialog showing the exact bytes
 that will be written. Press **Y** to confirm or **N** / **Escape** to cancel.
+
+## Web interface
+
+In addition to the terminal UI, `s7pymon` ships a live browser dashboard with
+an ultra-modern neon/glassmorphism theme. It reuses the same monitoring core
+(connection, decode, change-detection, logging, write modes) as the TUI and
+adds **no new Python dependencies** — the server is built on the standard
+library `http.server` and pushes live telemetry over **Server-Sent Events**.
+
+```bash
+# Same arguments as the TUI, plus web options
+s7pymon-web 192.168.1.100 --db 210 --start 0 --size 18 --open
+s7pymon-web 192.168.1.100 DB210.Byte0:heartbeat DB210.Int4:temp --http-port 8730
+```
+
+### Web options
+
+| Option | Description |
+|--------|-------------|
+| `--host HOST` | Interface to bind the HTTP server to (default `127.0.0.1`) |
+| `-P`, `--http-port PORT` | HTTP port to serve on (default `8731`) |
+| `--open` | Open the dashboard in your default browser on start |
+
+All the standard connection/variable options (`--rack`, `--slot`, `--port`,
+`--interval`, `--db`, `--start`, `--size`, config files, `:label` syntax) work
+exactly as they do for the TUI.
+
+### Endpoints
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/` | The dashboard (HTML/CSS/JS) |
+| `GET` | `/api/state` | One-shot snapshot + variable/connection description |
+| `GET` | `/api/stream` | Server-Sent Events live feed of poll/status snapshots |
+| `POST` | `/api/write` | Write a variable (`{spec, value}` or raw bytes) |
+| `POST` | `/api/control` | `pause` / `resume` / `reconnect` / `write_mode` |
+
+Writes honour the active **write mode**: when writes are disabled the server
+returns `403`; the dashboard's native `<dialog>` acts as the confirmation step.
+
+### Browser shortcuts
+
+| Key | Action |
+|-----|--------|
+| `Space` | Pause / resume polling |
+| `C` | Reconnect to the PLC |
+| `W` | Cycle write mode (disabled → confirm → allowed) |
+| `/` | Focus the command bar |
+
+The dashboard uses modern web-platform features (ES modules, custom elements,
+native `<dialog>`, View Transitions, and CSS `@layer`/nesting/`oklch()`/
+container queries) and targets recent Chromium-based browsers.
 
 ## Testing
 
