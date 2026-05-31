@@ -1,1 +1,99 @@
-<!doctype html><title>s7pymon</title><p>placeholder</p>
+<!doctype html>
+<html lang="en" data-theme="neon">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark" />
+  <title>s7pymon · live PLC monitor</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>" />
+  <link rel="stylesheet" href="/static/styles.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "s7/": "/static/"
+      }
+    }
+  </script>
+  <script type="module" src="/static/app.js"></script>
+</head>
+<body>
+  <div class="aurora" aria-hidden="true"></div>
+  <div class="grid-veil" aria-hidden="true"></div>
+
+  <header class="topbar glass">
+    <div class="brand">
+      <span class="bolt">⚡</span>
+      <h1>s7py<span>mon</span></h1>
+      <span class="tagline">live&nbsp;S7&nbsp;telemetry</span>
+    </div>
+
+    <div class="status-cluster">
+      <s7-status id="status"></s7-status>
+      <div class="metrics">
+        <span class="metric" id="metric-polls" title="Poll cycles">◷ <b>0</b></span>
+        <span class="metric" id="metric-vars" title="Monitored variables">▦ <b>0</b></span>
+        <span class="metric" id="metric-interval" title="Poll interval">⟳ <b>—</b></span>
+      </div>
+    </div>
+
+    <div class="controls">
+      <button id="btn-pause" class="ctl" data-on="false" title="Pause / resume polling (Space)">
+        <span class="ico">⏸</span><span class="lbl">Pause</span>
+      </button>
+      <button id="btn-reconnect" class="ctl" title="Reconnect to the PLC (C)">
+        <span class="ico">⟲</span><span class="lbl">Reconnect</span>
+      </button>
+      <button id="btn-writemode" class="ctl mode-disabled" title="Cycle write mode (W)">
+        <span class="ico">🔒</span><span class="lbl">read-only</span>
+      </button>
+    </div>
+  </header>
+
+  <main>
+    <section class="panel cards-panel">
+      <div class="panel-head">
+        <h2>Variables</h2>
+        <p class="hint">Click a card to write · changes flash live</p>
+      </div>
+      <div id="cards" class="cards"></div>
+    </section>
+
+    <aside class="side">
+      <section class="panel hex-panel">
+        <div class="panel-head"><h2>Memory</h2><p class="hint" id="hex-label">—</p></div>
+        <pre id="hex" class="hex">  waiting for data…</pre>
+      </section>
+
+      <section class="panel log-panel">
+        <div class="panel-head"><h2>Activity</h2><p class="hint">writes · errors · events</p></div>
+        <ol id="log" class="log" reversed></ol>
+      </section>
+    </aside>
+  </main>
+
+  <footer class="cmdbar glass">
+    <span class="prompt">›</span>
+    <input id="cmd" type="text" autocomplete="off" spellcheck="false"
+           placeholder="set DB210.Byte0 42   ·   write 210 0 FF 01   (Enter to run)" />
+    <kbd>Enter</kbd>
+  </footer>
+
+  <dialog id="edit-dialog" class="glass">
+    <form method="dialog" id="edit-form">
+      <h3 id="edit-title">Write value</h3>
+      <p id="edit-meta" class="edit-meta"></p>
+      <label class="field">
+        <span>New value</span>
+        <input id="edit-input" type="text" autocomplete="off" spellcheck="false" />
+      </label>
+      <p id="edit-hint" class="edit-hint"></p>
+      <menu>
+        <button value="cancel" class="ghost">Cancel</button>
+        <button value="confirm" id="edit-confirm" class="danger" autofocus>Write to PLC</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+</body>
+</html>
