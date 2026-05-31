@@ -286,6 +286,10 @@ class MonitorEngine:
     def find_variable(self, spec: str) -> S7Variable | None:
         return next((v for v in self._variables if v.spec == spec), None)
 
+    def status_snapshot(self) -> Snapshot:
+        """A snapshot of state only (no PLC read), used while paused."""
+        return self._snapshot(error=None, groups=[], readings=[])
+
     def poll(self) -> Snapshot:
         """Read every group, decode all variables and detect changes.
 
