@@ -19,8 +19,9 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Union
 
-from .protocols import Connection, ConnectionState
+from .protocols import Connection, ConnectionState, DataSource
 from .logging import DataLogger, LogEntry
+from .rules import RulesEngine
 from .variable import S7Area, DataType, S7Variable, extract_value
 
 Value = Union[int, float, bool, str]
@@ -67,22 +68,37 @@ class ReadGroup:
 
     Frontends read one buffer per group; the engine keys decoded variables to
     their group via :pyattr:`key` (which matches :func:`group_key`).
+
+    The optional ``_source`` field supports protocol-agnostic groups (EIP, …).
+    When set it overrides the S7-specific ``area``/``db`` fields for the
+    ``source``, ``label`` and ``key`` properties.
     """
 
-    area: S7Area
-    db: int  # 0 for non-DB areas
-    start: int
-    size: int
+    area: S7Area = S7Area.DB
+    db: int = 0
+    start: int = 0
+    size: int = 0
+    _source: DataSource | None = None
 
     @property
     def label(self) -> str:
+        if self._source is not None:
+            return str(self._source)
         if self.area == S7Area.DB:
             return f"DB{self.db}"
         return f"{self.area.value} ({self.area.description})"
 
     @property
     def key(self) -> str:
-        return group_key(self.area, self.db)
+        return str(self.source)
+
+    @property
+    def source(self) -> DataSource:
+        if self._source is not None:
+            return self._source
+        if self.area == S7Area.DB:
+            return DataSource.s7_db(self.db)
+        return DataSource.s7_area(self.area.value)
 
 
 @dataclass(frozen=True)
@@ -194,11 +210,12 @@ class MonitorEngine:
     def __init__(
         self,
         connection: Connection,
-        variables: list[S7Variable],
+        variables: list,
         read_groups: list[ReadGroup],
         poll_interval: float = 1.0,
         write_mode: WriteMode = WriteMode.DISABLED,
         logger: DataLogger | None = None,
+        rules_engine: RulesEngine | None = None,
     ):
         self._connection = connection
         self._variables = variables
@@ -206,6 +223,7 @@ class MonitorEngine:
         self._poll_interval = poll_interval
         self._write_mode = write_mode
         self._logger = logger
+        self._rules_engine = rules_engine
         self._previous_values: dict[str, str] = {}
         self._current_values: dict[str, str] = {}
         self._poll_count = 0
@@ -217,7 +235,7 @@ class MonitorEngine:
         return self._connection
 
     @property
-    def variables(self) -> list[S7Variable]:
+    def variables(self) -> list:
         return self._variables
 
     @property
@@ -259,6 +277,15 @@ class MonitorEngine:
         return self._write_mode
 
     @property
+    def rules_engine(self) -> RulesEngine | None:
+        return self._rules_engine
+
+    def trigger_pulse(self, target: str) -> None:
+        if self._rules_engine is None:
+            raise KeyError(f"No pulse rule for {target!r} (no rules configured)")
+        self._rules_engine.trigger_pulse(target)
+
+    @property
     def writes_enabled(self) -> bool:
         return self._write_mode != WriteMode.DISABLED
 
@@ -283,7 +310,7 @@ class MonitorEngine:
             pass
 
     # ------------------------------------------------------------------- read
-    def find_variable(self, spec: str) -> S7Variable | None:
+    def find_variable(self, spec: str):
         return next((v for v in self._variables if v.spec == spec), None)
 
     def status_snapshot(self) -> Snapshot:
@@ -304,8 +331,8 @@ class MonitorEngine:
             buffers: dict[str, tuple[bytearray, int]] = {}
             groups: list[GroupDump] = []
             for group in self._read_groups:
-                result = self._connection.area_read(
-                    group.area.value, group.start, group.size, db=group.db
+                result = self._connection.read_source(
+                    group.source, group.start, group.size
                 )
                 buffers[group.key] = (result.data, group.start)
                 groups.append(
@@ -323,14 +350,21 @@ class MonitorEngine:
 
         self._previous_values = dict(self._current_values)
         readings = [self._read_variable(var, buffers) for var in self._variables]
+
+        if self._rules_engine is not None:
+            try:
+                self._rules_engine.apply(self._connection, self._current_values)
+            except Exception:
+                pass
+
         self._poll_count += 1
         return self._snapshot(error=None, groups=groups, readings=readings)
 
     def _read_variable(
-        self, var: S7Variable, buffers: dict[str, tuple[bytearray, int]]
+        self, var, buffers: dict[str, tuple[bytearray, int]]
     ) -> VariableReading:
-        label = area_label(var.area, var.db)
-        key = group_key(var.area, var.db)
+        label = str(var.source)
+        key = str(var.source)
         buffer = buffers.get(key)
         if buffer is None:
             return self._reading(var, label, value="—", raw_hex="", changed=False,
@@ -429,29 +463,29 @@ class MonitorEngine:
             raise WriteBlockedError("Writes are disabled")
         return self._write(S7Variable.parse(spec), text)
 
-    def _write(self, var: S7Variable, text: str) -> WriteResult:
+    def _write(self, var, text: str) -> WriteResult:
         parsed = var.parse_input(text)
         if var.type == DataType.BIT:
             if not isinstance(parsed, bool):
                 raise TypeError("Bit writes require a boolean value")
-            current = self._connection.area_read(var.area.value, var.offset, 1, db=var.db)
+            current = self._connection.read_source(var.source, var.offset, 1)
             encoded = var.encode_bit(current.data[0], parsed)
         else:
             encoded = var.encode(parsed)
-        self._connection.area_write(var.area.value, var.offset, encoded, db=var.db)
+        self._connection.write_source(var.source, var.offset, encoded)
         return WriteResult(
             spec=var.spec,
             description=f"Set {var.display_name} = {parsed}",
             bytes_hex=" ".join(f"{b:02X}" for b in encoded),
             offset=var.offset,
-            target=area_label(var.area, var.db),
+            target=str(var.source),
         )
 
     def write_raw(self, db: int, offset: int, data: bytearray) -> WriteResult:
         """Raw byte write to a DB (command-bar ``write`` command)."""
         if not self.writes_enabled:
             raise WriteBlockedError("Writes are disabled")
-        self._connection.area_write("DB", offset, data, db=db)
+        self._connection.write_source(DataSource.s7_db(db), offset, data)
         return WriteResult(
             spec=f"DB{db}@{offset}",
             description=f"Raw write to DB{db} at offset {offset}",
@@ -475,7 +509,7 @@ class MonitorEngine:
                 {
                     "spec": v.spec,
                     "label": v.display_name,
-                    "area": area_label(v.area, v.db),
+                    "area": str(v.source),
                     "type": v.type.value,
                     "offset": v.offset,
                     "bit": v.extra if v.type == DataType.BIT else None,
