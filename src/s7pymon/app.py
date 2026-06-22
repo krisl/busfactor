@@ -467,8 +467,7 @@ class S7MonitorApp(App):
         try:
             results: dict[str, tuple[bytearray, int]] = {}
             for group in self._read_groups:
-                source = DataSource.s7_db(group.db) if group.area == S7Area.DB else DataSource.s7_area(group.area.value)
-                result = self._connection.read_source(source, group.start, group.size)
+                result = self._connection.read_source(group.source, group.start, group.size)
                 results[group.key] = (result.data, group.start)
             self.call_from_thread(self._on_data_received, results)
         except Exception as e:
