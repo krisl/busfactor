@@ -16,9 +16,9 @@ from typing import cast
 
 import click
 
-from .connection import S7Connection
+from .connection import S7Connection, _parse_s7_source as _parse_demo_source
 from .engine import MonitorEngine, ReadGroup, WriteMode
-from .protocols import ConnectionConfig, ConnectionState, ReadResult
+from .protocols import ConnectionConfig, ConnectionState, DataSource, ReadResult
 from .variable import S7Area, S7Variable
 from .web import S7WebServer
 
@@ -81,31 +81,30 @@ class DemoConnection:
         if self._thread.is_alive():
             self._thread.join(timeout=1)
 
-    def area_read(self, area: str, start: int, size: int, db: int = 0) -> ReadResult:
+    def read_source(self, source: DataSource, offset: int, size: int) -> ReadResult:
         with self._lock:
             if not self.connected:
                 raise ConnectionError("Not connected")
-            s7_area = S7Area(area)
-            buf = self._buffer_for_locked(s7_area, db)
-            end = start + size
+            area, db = _parse_demo_source(source)
+            buf = self._buffer_for_locked(area, db)
+            end = offset + size
             self._grow_locked(buf, end)
             return ReadResult(
-                data=bytearray(buf[start:end]),
-                area=area,
-                db=db,
-                start=start,
+                data=bytearray(buf[offset:end]),
+                source=source,
+                start=offset,
                 size=size,
             )
 
-    def area_write(self, area: str, start: int, data: bytearray, db: int = 0) -> None:
+    def write_source(self, source: DataSource, offset: int, data: bytearray) -> None:
         with self._lock:
             if not self.connected:
                 raise ConnectionError("Not connected")
-            s7_area = S7Area(area)
-            buf = self._buffer_for_locked(s7_area, db)
-            end = start + len(data)
+            area, db = _parse_demo_source(source)
+            buf = self._buffer_for_locked(area, db)
+            end = offset + len(data)
             self._grow_locked(buf, end)
-            buf[start:end] = data
+            buf[offset:end] = data
 
     def _run(self) -> None:
         while not self._stop.wait(self._tick_interval):
