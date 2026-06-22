@@ -8,7 +8,7 @@ import urllib.request
 
 import pytest
 
-from s7pymon.connection import ConnectionConfig, ConnectionState, ReadResult
+from s7pymon.protocols import ConnectionConfig, ConnectionState, ReadResult
 from s7pymon.engine import MonitorEngine, WriteMode
 from s7pymon.variable import S7Area, S7Variable
 from s7pymon.web import Broadcaster, S7WebServer
@@ -33,14 +33,16 @@ class FakeConnection:
         self.state = ConnectionState.DISCONNECTED
 
     def area_read(self, area, start, size, db=0):
-        buf = self._buffers.get((area, db), bytearray(64))
+        area_key = S7Area(area)
+        buf = self._buffers.get((area_key, db), bytearray(64))
         return ReadResult(data=bytearray(buf[start:start + size]), area=area, db=db,
                           start=start, size=size)
 
-    def area_write(self, area, start, data, db=0):
-        self.writes.append((area, start, bytes(data), db))
-        buf = self._buffers.setdefault((area, db), bytearray(64))
-        buf[start:start + len(data)] = data
+    def area_write(self, area, offset, data, db=0):
+        self.writes.append((area, offset, bytes(data), db))
+        area_key = S7Area(area)
+        buf = self._buffers.setdefault((area_key, db), bytearray(64))
+        buf[offset:offset + len(data)] = data
 
 
 class Grp:
@@ -197,7 +199,7 @@ class TestWrite:
         code, body = _post(srv.url + "api/write", {"spec": "DB210.Byte0", "value": "0x2A"})
         assert code == 200
         assert body["ok"] is True
-        assert conn.writes[-1] == (S7Area.DB, 0, b"\x2a", 210)
+        assert conn.writes[-1] == ("DB", 0, b"\x2a", 210)
 
     def test_write_raw(self, server):
         srv, engine, conn = server
@@ -205,7 +207,7 @@ class TestWrite:
         code, body = _post(srv.url + "api/write",
                            {"raw": {"db": 210, "offset": 1, "bytes": "FF 01"}})
         assert code == 200
-        assert conn.writes[-1] == (S7Area.DB, 1, b"\xff\x01", 210)
+        assert conn.writes[-1] == ("DB", 1, b"\xff\x01", 210)
 
     def test_write_bad_value(self, server):
         srv, engine, _ = server

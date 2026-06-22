@@ -45,14 +45,16 @@ class FakeConnection:
         if self.read_error is not None:
             self.state = ConnectionState.ERROR
             raise self.read_error
-        buf = self._buffers.get((area, db), bytearray(64))
+        area_key = S7Area(area)
+        buf = self._buffers.get((area_key, db), bytearray(64))
         return ReadResult(data=bytearray(buf[start : start + size]), area=area, db=db,
                           start=start, size=size)
 
-    def area_write(self, area, start, data, db=0):
-        self.writes.append((area, start, bytes(data), db))
-        buf = self._buffers.setdefault((area, db), bytearray(64))
-        buf[start : start + len(data)] = data
+    def area_write(self, area, offset, data, db=0):
+        self.writes.append((area, offset, bytes(data), db))
+        area_key = S7Area(area)
+        buf = self._buffers.setdefault((area_key, db), bytearray(64))
+        buf[offset : offset + len(data)] = data
 
 
 class Grp:
@@ -196,7 +198,7 @@ class TestWrite:
         engine, conn = make_engine({(S7Area.DB, 210): bytearray(16)}, [var],
                                    write_mode=WriteMode.ALLOWED)
         res = engine.write_variable("DB210.Byte0", "0x2A")
-        assert conn.writes[-1] == (S7Area.DB, 0, b"\x2a", 210)
+        assert conn.writes[-1] == ("DB", 0, b"\x2a", 210)
         assert res.bytes_hex == "2A"
         assert res.target == "DB210"
 
@@ -206,21 +208,21 @@ class TestWrite:
                                    [var], write_mode=WriteMode.ALLOWED)
         engine.write_variable("DB210.Bit0.3", "1")
         # bit 3 set -> 0x08
-        assert conn.writes[-1] == (S7Area.DB, 0, b"\x08", 210)
+        assert conn.writes[-1] == ("DB", 0, b"\x08", 210)
 
     def test_write_spec_unmonitored(self):
         engine, conn = make_engine({(S7Area.DB, 5): bytearray(16)}, [],
                                    groups=[Grp(S7Area.DB, 5, 0, 16)],
                                    write_mode=WriteMode.ALLOWED)
         engine.write_spec("DB5.Byte2", "9")
-        assert conn.writes[-1] == (S7Area.DB, 2, b"\x09", 5)
+        assert conn.writes[-1] == ("DB", 2, b"\x09", 5)
 
     def test_write_raw(self):
         engine, conn = make_engine({(S7Area.DB, 7): bytearray(16)}, [],
                                    groups=[Grp(S7Area.DB, 7, 0, 16)],
                                    write_mode=WriteMode.ALLOWED)
         res = engine.write_raw(7, 1, bytearray([0xFF, 0x01]))
-        assert conn.writes[-1] == (S7Area.DB, 1, b"\xff\x01", 7)
+        assert conn.writes[-1] == ("DB", 1, b"\xff\x01", 7)
         assert res.bytes_hex == "FF 01"
 
 

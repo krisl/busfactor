@@ -16,8 +16,9 @@ from typing import cast
 
 import click
 
-from .connection import ConnectionConfig, ConnectionState, ReadResult, S7Connection
+from .connection import S7Connection
 from .engine import MonitorEngine, ReadGroup, WriteMode
+from .protocols import ConnectionConfig, ConnectionState, ReadResult
 from .variable import S7Area, S7Variable
 from .web import S7WebServer
 
@@ -80,11 +81,12 @@ class DemoConnection:
         if self._thread.is_alive():
             self._thread.join(timeout=1)
 
-    def area_read(self, area: S7Area, start: int, size: int, db: int = 0) -> ReadResult:
+    def area_read(self, area: str, start: int, size: int, db: int = 0) -> ReadResult:
         with self._lock:
             if not self.connected:
                 raise ConnectionError("Not connected")
-            buf = self._buffer_for_locked(area, db)
+            s7_area = S7Area(area)
+            buf = self._buffer_for_locked(s7_area, db)
             end = start + size
             self._grow_locked(buf, end)
             return ReadResult(
@@ -95,11 +97,12 @@ class DemoConnection:
                 size=size,
             )
 
-    def area_write(self, area: S7Area, start: int, data: bytearray, db: int = 0) -> None:
+    def area_write(self, area: str, start: int, data: bytearray, db: int = 0) -> None:
         with self._lock:
             if not self.connected:
                 raise ConnectionError("Not connected")
-            buf = self._buffer_for_locked(area, db)
+            s7_area = S7Area(area)
+            buf = self._buffer_for_locked(s7_area, db)
             end = start + len(data)
             self._grow_locked(buf, end)
             buf[start:end] = data

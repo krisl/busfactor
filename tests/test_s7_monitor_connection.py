@@ -171,21 +171,21 @@ class TestS7ConnectionAreaReadWrite:
 
     def test_area_read_db_delegates(self, connection, mock_client):
         mock_client.db_read.return_value = bytearray(b"\x01")
-        result = connection.area_read(S7Area.DB, start=0, size=1, db=210)
+        result = connection.area_read("DB", start=0, size=1, db=210)
         mock_client.db_read.assert_called_once_with(210, 0, 1)
-        assert result.area == S7Area.DB
+        assert result.area == "DB"
         assert result.db == 210
 
     def test_area_write_eb(self, connection, mock_client):
-        connection.area_write(S7Area.EB, start=0, data=bytearray(b"\x01"))
+        connection.area_write("EB", offset=0, data=bytearray(b"\x01"))
         mock_client.eb_write.assert_called_once_with(0, 1, bytearray(b"\x01"))
 
     def test_area_write_ab(self, connection, mock_client):
-        connection.area_write(S7Area.AB, start=0, data=bytearray(b"\x01"))
+        connection.area_write("AB", offset=0, data=bytearray(b"\x01"))
         mock_client.ab_write.assert_called_once_with(0, bytearray(b"\x01"))
 
     def test_area_write_db_delegates(self, connection, mock_client):
-        connection.area_write(S7Area.DB, start=5, data=bytearray(b"\xFF"), db=210)
+        connection.area_write("DB", offset=5, data=bytearray(b"\xFF"), db=210)
         mock_client.db_write.assert_called_once_with(210, 5, bytearray(b"\xFF"))
 
     def test_area_read_not_connected(self, mock_client):
@@ -193,9 +193,9 @@ class TestS7ConnectionAreaReadWrite:
         conn = S7Connection(config, client=mock_client)
         # Don't connect
         with pytest.raises(ConnectionError, match="Not connected"):
-            conn.area_read(S7Area.EB, 0, 2)
+            conn.area_read("EB", 0, 2)
 
     def test_db_read_returns_area_field(self, connection, mock_client):
         mock_client.db_read.return_value = bytearray(b"\x01")
         result = connection.db_read(db=210, start=0, size=1)
-        assert result.area == S7Area.DB
+        assert result.area == "DB"

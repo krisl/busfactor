@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Union
 
-from .connection import ConnectionState, S7Connection
+from .protocols import Connection, ConnectionState
 from .logging import DataLogger, LogEntry
 from .variable import S7Area, DataType, S7Variable, extract_value
 
@@ -193,7 +193,7 @@ class MonitorEngine:
 
     def __init__(
         self,
-        connection: S7Connection,
+        connection: Connection,
         variables: list[S7Variable],
         read_groups: list[ReadGroup],
         poll_interval: float = 1.0,
@@ -213,7 +213,7 @@ class MonitorEngine:
 
     # ------------------------------------------------------------------ state
     @property
-    def connection(self) -> S7Connection:
+    def connection(self) -> Connection:
         return self._connection
 
     @property
@@ -305,7 +305,7 @@ class MonitorEngine:
             groups: list[GroupDump] = []
             for group in self._read_groups:
                 result = self._connection.area_read(
-                    group.area, group.start, group.size, db=group.db
+                    group.area.value, group.start, group.size, db=group.db
                 )
                 buffers[group.key] = (result.data, group.start)
                 groups.append(
@@ -434,11 +434,11 @@ class MonitorEngine:
         if var.type == DataType.BIT:
             if not isinstance(parsed, bool):
                 raise TypeError("Bit writes require a boolean value")
-            current = self._connection.area_read(var.area, var.offset, 1, db=var.db)
+            current = self._connection.area_read(var.area.value, var.offset, 1, db=var.db)
             encoded = var.encode_bit(current.data[0], parsed)
         else:
             encoded = var.encode(parsed)
-        self._connection.area_write(var.area, var.offset, encoded, db=var.db)
+        self._connection.area_write(var.area.value, var.offset, encoded, db=var.db)
         return WriteResult(
             spec=var.spec,
             description=f"Set {var.display_name} = {parsed}",
@@ -451,7 +451,7 @@ class MonitorEngine:
         """Raw byte write to a DB (command-bar ``write`` command)."""
         if not self.writes_enabled:
             raise WriteBlockedError("Writes are disabled")
-        self._connection.area_write(S7Area.DB, offset, data, db=db)
+        self._connection.area_write("DB", offset, data, db=db)
         return WriteResult(
             spec=f"DB{db}@{offset}",
             description=f"Raw write to DB{db} at offset {offset}",

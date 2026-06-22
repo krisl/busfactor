@@ -34,9 +34,10 @@ from dataclasses import dataclass
 import click
 
 from .config import S7MonitorConfig
-from .connection import ConnectionConfig, S7Connection
+from .connection import S7Connection
 from .engine import ReadGroup, WriteMode
 from .logging import LogFormat
+from .protocols import Connection, ConnectionConfig
 from .variable import S7Area, DataType, S7Variable, compute_read_range
 
 
@@ -90,7 +91,7 @@ class ResolvedRuntime:
     parsed variables, read groups and resolved scalar settings.
     """
 
-    connection: S7Connection
+    connection: Connection
     variables: list[S7Variable]
     read_groups: list[ReadGroup]
     poll_interval: float
