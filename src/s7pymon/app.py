@@ -26,7 +26,7 @@ from textual.widgets import DataTable, Footer, Header, Input, Label, RichLog, St
 from .connection import ConnectionConfig, ConnectionState, S7Connection
 from .engine import ReadGroup, WriteMode, format_hex_dump
 from .logging import DataLogger, LogEntry, LogFormat, SessionMetadata
-from .variable import S7Area, S7Type, S7Variable, compute_read_range, extract_value
+from .variable import S7Area, DataType, S7Variable, compute_read_range, extract_value
 
 __all__ = ["S7MonitorApp", "WriteMode", "format_hex_dump", "ReadGroup"]
 
@@ -160,9 +160,9 @@ class EditVariableScreen(ModalScreen[str | None]):
                 id="edit-input",
             )
             hint = "Enter to confirm · Escape to cancel"
-            if self._variable.type == S7Type.BIT:
+            if self._variable.type == DataType.BIT:
                 hint += " · Values: 0/1, true/false, on/off"
-            elif self._variable.type in (S7Type.BYTE, S7Type.WORD, S7Type.DWORD):
+            elif self._variable.type in (DataType.BYTE, DataType.WORD, DataType.DWORD):
                 hint += " · Hex: 0xFF"
             yield Label(hint, id="edit-hint")
 
@@ -396,7 +396,7 @@ class S7MonitorApp(App):
                 area_label,
                 var.display_name,
                 var.type.value,
-                str(var.offset) + (f".{var.extra}" if var.type == S7Type.BIT else ""),
+                str(var.offset) + (f".{var.extra}" if var.type == DataType.BIT else ""),
                 "—",
                 "—",
                 key=var.spec,
@@ -601,7 +601,7 @@ class S7MonitorApp(App):
         try:
             parsed = var.parse_input(text)
 
-            if var.type == S7Type.BIT:
+            if var.type == DataType.BIT:
                 if not isinstance(parsed, bool):
                     raise TypeError("Bit writes require a boolean value")
                 result = self._connection.area_read(var.area, var.offset, 1, db=var.db)
@@ -665,7 +665,7 @@ class S7MonitorApp(App):
             return
         row_key, _ = table.coordinate_to_cell_key(table.cursor_coordinate)
         var = next((v for v in self._variables if v.spec == row_key.value), None)
-        if var is None or var.type != S7Type.BIT:
+        if var is None or var.type != DataType.BIT:
             log = self.query_one("#log-panel", RichLog)
             log.write("[yellow]Toggle only works on Bit variables[/yellow]")
             return
@@ -719,7 +719,7 @@ class S7MonitorApp(App):
                 value_text = " ".join(parts[2:])
                 parsed = var.parse_input(value_text)
 
-                if var.type == S7Type.BIT:
+                if var.type == DataType.BIT:
                     if not isinstance(parsed, bool):
                         raise TypeError("Bit writes require a boolean value")
                     result = self._connection.area_read(var.area, var.offset, 1, db=var.db)

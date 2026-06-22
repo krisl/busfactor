@@ -14,7 +14,7 @@ from s7pymon.engine import (
     format_hex_dump,
     group_key,
 )
-from s7pymon.variable import S7Area, S7Type, S7Variable
+from s7pymon.variable import S7Area, DataType, S7Variable
 
 
 class FakeConnection:

@@ -37,7 +37,7 @@ from .config import S7MonitorConfig
 from .connection import ConnectionConfig, S7Connection
 from .engine import ReadGroup, WriteMode
 from .logging import LogFormat
-from .variable import S7Area, S7Type, S7Variable, compute_read_range
+from .variable import S7Area, DataType, S7Variable, compute_read_range
 
 
 def parse_variable_arg(arg: str) -> S7Variable:
@@ -57,7 +57,7 @@ def parse_variable_arg(arg: str) -> S7Variable:
 def build_default_variables(db: int, start: int, size: int) -> list[S7Variable]:
     """Build a default set of Byte variables covering the entire DB range."""
     return [
-        S7Variable(db=db, type=S7Type.BYTE, offset=start + i, label=f"byte_{i}")
+        S7Variable(db=db, type=DataType.BYTE, offset=start + i, label=f"byte_{i}")
         for i in range(size)
     ]
 

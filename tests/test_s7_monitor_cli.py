@@ -8,26 +8,26 @@ from s7pymon.cli import (
     main,
     parse_variable_arg,
 )
-from s7pymon.variable import S7Area, S7Type, S7Variable
+from s7pymon.variable import S7Area, DataType, S7Variable
 
 
 class TestParseVariableArg:
     def test_simple_spec(self):
         v = parse_variable_arg("DB210.Byte0")
         assert v.db == 210
-        assert v.type == S7Type.BYTE
+        assert v.type == DataType.BYTE
         assert v.label is None
 
     def test_spec_with_label(self):
         v = parse_variable_arg("DB210.Byte0:heartbeat")
         assert v.db == 210
-        assert v.type == S7Type.BYTE
+        assert v.type == DataType.BYTE
         assert v.label == "heartbeat"
         assert v.display_name == "heartbeat"
 
     def test_bit_with_label(self):
         v = parse_variable_arg("DB210.Bit1.0:e_stop")
-        assert v.type == S7Type.BIT
+        assert v.type == DataType.BIT
         assert v.offset == 1
         assert v.extra == 0
         assert v.label == "e_stop"
@@ -46,7 +46,7 @@ class TestBuildDefaultVariables:
     def test_creates_byte_variables(self):
         vars = build_default_variables(db=210, start=0, size=3)
         assert len(vars) == 3
-        assert all(v.type == S7Type.BYTE for v in vars)
+        assert all(v.type == DataType.BYTE for v in vars)
         assert [v.offset for v in vars] == [0, 1, 2]
         assert vars[0].label == "byte_0"
         assert vars[0].db == 210

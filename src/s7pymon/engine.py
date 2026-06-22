@@ -21,7 +21,7 @@ from typing import Union
 
 from .connection import ConnectionState, S7Connection
 from .logging import DataLogger, LogEntry
-from .variable import S7Area, S7Type, S7Variable, extract_value
+from .variable import S7Area, DataType, S7Variable, extract_value
 
 Value = Union[int, float, bool, str]
 
@@ -382,7 +382,7 @@ class MonitorEngine:
             area=label,
             type=var.type.value,
             offset=var.offset,
-            bit=var.extra if var.type == S7Type.BIT else None,
+            bit=var.extra if var.type == DataType.BIT else None,
             value=value,
             raw_hex=raw_hex,
             changed=changed,
@@ -431,7 +431,7 @@ class MonitorEngine:
 
     def _write(self, var: S7Variable, text: str) -> WriteResult:
         parsed = var.parse_input(text)
-        if var.type == S7Type.BIT:
+        if var.type == DataType.BIT:
             if not isinstance(parsed, bool):
                 raise TypeError("Bit writes require a boolean value")
             current = self._connection.area_read(var.area, var.offset, 1, db=var.db)
@@ -478,7 +478,7 @@ class MonitorEngine:
                     "area": area_label(v.area, v.db),
                     "type": v.type.value,
                     "offset": v.offset,
-                    "bit": v.extra if v.type == S7Type.BIT else None,
+                    "bit": v.extra if v.type == DataType.BIT else None,
                 }
                 for v in self._variables
             ],

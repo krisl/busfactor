@@ -52,7 +52,7 @@ _AREA_DESCRIPTIONS: dict[S7Area, str] = {
 }
 
 
-class S7Type(Enum):
+class DataType(Enum):
     BYTE = "Byte"
     INT = "Int"
     DINT = "DInt"
@@ -71,26 +71,30 @@ class S7Type(Enum):
         return _TYPE_FORMATS.get(self)
 
 
-_TYPE_SIZES: dict[S7Type, int] = {
-    S7Type.BYTE: 1,
-    S7Type.INT: 2,
-    S7Type.DINT: 4,
-    S7Type.WORD: 2,
-    S7Type.DWORD: 4,
-    S7Type.REAL: 4,
-    S7Type.BIT: 1,
-    S7Type.STRING: 0,  # variable, determined by extra param
+_TYPE_SIZES: dict[DataType, int] = {
+    DataType.BYTE: 1,
+    DataType.INT: 2,
+    DataType.DINT: 4,
+    DataType.WORD: 2,
+    DataType.DWORD: 4,
+    DataType.REAL: 4,
+    DataType.BIT: 1,
+    DataType.STRING: 0,  # variable, determined by extra param
 }
 
 # Big-endian struct formats (S7 is big-endian)
-_TYPE_FORMATS: dict[S7Type, str] = {
-    S7Type.BYTE: ">B",
-    S7Type.INT: ">h",
-    S7Type.DINT: ">i",
-    S7Type.WORD: ">H",
-    S7Type.DWORD: ">I",
-    S7Type.REAL: ">f",
+_TYPE_FORMATS: dict[DataType, str] = {
+    DataType.BYTE: ">B",
+    DataType.INT: ">h",
+    DataType.DINT: ">i",
+    DataType.WORD: ">H",
+    DataType.DWORD: ">I",
+    DataType.REAL: ">f",
 }
+
+
+S7Type = DataType
+"Deprecated alias — use DataType."
 
 # Pattern: DB<num>.<Type><offset>[.<extra>]
 _DB_VAR_PATTERN = re.compile(
@@ -110,7 +114,7 @@ class S7Variable:
     """Parsed S7 variable specification."""
 
     db: int  # DB number for DB area; 0 for non-DB areas
-    type: S7Type
+    type: DataType
     offset: int
     extra: int | None = None  # bit number for Bit, max length for String
     label: str | None = None  # optional human-readable name
@@ -133,7 +137,7 @@ class S7Variable:
 
     @property
     def byte_size(self) -> int:
-        if self.type == S7Type.STRING:
+        if self.type == DataType.STRING:
             if self.extra is None:
                 raise ValueError(f"String variable {self.spec} requires max length")
             return self.extra + 2  # S7 strings have 2-byte header (max_len, actual_len)
@@ -181,19 +185,19 @@ class S7Variable:
             extra = int(extra_str) if extra_str is not None else None
 
         # Normalize type name to match enum (case-insensitive input)
-        type_map: dict[str, S7Type] = {str(t.value).lower(): t for t in S7Type}
-        s7_type = type_map[type_name.lower()]
+        type_map: dict[str, DataType] = {str(t.value).lower(): t for t in DataType}
+        data_type = type_map[type_name.lower()]
 
         # Validation
-        if s7_type == S7Type.BIT:
+        if data_type == DataType.BIT:
             if extra is None:
                 raise ValueError(f"Bit variable requires bit number: {spec} (e.g. DB200.Bit0.3)")
             if not 0 <= extra <= 7:
                 raise ValueError(f"Bit number must be 0-7, got {extra} in {spec}")
-        if s7_type == S7Type.STRING and extra is None:
+        if data_type == DataType.STRING and extra is None:
             raise ValueError(f"String variable requires max length: {spec} (e.g. DB200.String50.20)")
 
-        return cls(db=db, type=s7_type, offset=offset, extra=extra, label=label, area=area)
+        return cls(db=db, type=data_type, offset=offset, extra=extra, label=label, area=area)
 
     def decode(self, data: bytes | bytearray) -> Union[int, float, bool, str]:
         """Decode raw bytes into a Python value."""
@@ -203,11 +207,11 @@ class S7Variable:
             )
         raw = data[: self.byte_size]
 
-        if self.type == S7Type.BIT:
+        if self.type == DataType.BIT:
             assert self.extra is not None
             return bool(raw[0] & (1 << self.extra))
 
-        if self.type == S7Type.STRING:
+        if self.type == DataType.STRING:
             if len(raw) < 2:
                 return ""
             actual_len = raw[1]
@@ -219,12 +223,12 @@ class S7Variable:
 
     def encode(self, value: Union[int, float, bool, str]) -> bytearray:
         """Encode a Python value into raw bytes for writing."""
-        if self.type == S7Type.BIT:
+        if self.type == DataType.BIT:
             raise ValueError(
                 "Cannot encode full byte for Bit type; use encode_bit() instead"
             )
 
-        if self.type == S7Type.STRING:
+        if self.type == DataType.STRING:
             assert self.extra is not None
             s = str(value)
             max_len = self.extra
@@ -241,7 +245,7 @@ class S7Variable:
 
     def encode_bit(self, current_byte: int, value: bool) -> bytearray:
         """Encode a bit value by modifying a single byte."""
-        assert self.type == S7Type.BIT and self.extra is not None
+        assert self.type == DataType.BIT and self.extra is not None
         if value:
             result = current_byte | (1 << self.extra)
         else:
@@ -250,32 +254,32 @@ class S7Variable:
 
     def _coerce(self, value: Union[int, float, bool, str]) -> Union[int, float]:
         """Coerce a value to the appropriate Python type for struct packing."""
-        if self.type == S7Type.REAL:
+        if self.type == DataType.REAL:
             return float(value)
         return int(value)
 
     def format_value(self, value: Union[int, float, bool, str]) -> str:
         """Format a decoded value for display."""
-        if self.type == S7Type.BIT:
+        if self.type == DataType.BIT:
             return "1" if value else "0"
-        if self.type == S7Type.REAL:
+        if self.type == DataType.REAL:
             return f"{value:.4f}"
-        if self.type == S7Type.STRING:
+        if self.type == DataType.STRING:
             return repr(value)
         return str(value)
 
     def parse_input(self, text: str) -> Union[int, float, bool, str]:
         """Parse user text input into a value suitable for encode()."""
         text = text.strip()
-        if self.type == S7Type.BIT:
+        if self.type == DataType.BIT:
             if text.lower() in ("1", "true", "on", "yes"):
                 return True
             if text.lower() in ("0", "false", "off", "no"):
                 return False
             raise ValueError(f"Invalid bit value: {text!r}")
-        if self.type == S7Type.REAL:
+        if self.type == DataType.REAL:
             return float(text)
-        if self.type == S7Type.STRING:
+        if self.type == DataType.STRING:
             return text
         # Integer types - support hex
         if text.startswith("0x") or text.startswith("0X"):

@@ -3,7 +3,7 @@ import pytest
 
 from s7pymon.variable import (
     S7Area,
-    S7Type,
+    DataType,
     S7Variable,
     compute_read_range,
     extract_value,
@@ -14,7 +14,7 @@ class TestS7VariableParsing:
     def test_parse_byte(self):
         v = S7Variable.parse("DB200.Byte0")
         assert v.db == 200
-        assert v.type == S7Type.BYTE
+        assert v.type == DataType.BYTE
         assert v.offset == 0
         assert v.extra is None
         assert v.spec == "DB200.Byte0"
@@ -22,38 +22,38 @@ class TestS7VariableParsing:
     def test_parse_int(self):
         v = S7Variable.parse("DB210.Int4")
         assert v.db == 210
-        assert v.type == S7Type.INT
+        assert v.type == DataType.INT
         assert v.offset == 4
         assert v.byte_size == 2
 
     def test_parse_dint(self):
         v = S7Variable.parse("DB100.DInt8")
         assert v.db == 100
-        assert v.type == S7Type.DINT
+        assert v.type == DataType.DINT
         assert v.offset == 8
         assert v.byte_size == 4
 
     def test_parse_word(self):
         v = S7Variable.parse("DB5.Word2")
         assert v.db == 5
-        assert v.type == S7Type.WORD
+        assert v.type == DataType.WORD
         assert v.offset == 2
         assert v.byte_size == 2
 
     def test_parse_dword(self):
         v = S7Variable.parse("DB1.DWord6")
-        assert v.type == S7Type.DWORD
+        assert v.type == DataType.DWORD
         assert v.byte_size == 4
 
     def test_parse_real(self):
         v = S7Variable.parse("DB200.Real12")
-        assert v.type == S7Type.REAL
+        assert v.type == DataType.REAL
         assert v.offset == 12
         assert v.byte_size == 4
 
     def test_parse_bit(self):
         v = S7Variable.parse("DB200.Bit0.3")
-        assert v.type == S7Type.BIT
+        assert v.type == DataType.BIT
         assert v.offset == 0
         assert v.extra == 3
         assert v.byte_size == 1
@@ -68,7 +68,7 @@ class TestS7VariableParsing:
 
     def test_parse_string(self):
         v = S7Variable.parse("DB200.String50.20")
-        assert v.type == S7Type.STRING
+        assert v.type == DataType.STRING
         assert v.offset == 50
         assert v.extra == 20
         assert v.byte_size == 22  # 20 + 2 header bytes
@@ -80,7 +80,7 @@ class TestS7VariableParsing:
     def test_parse_case_insensitive(self):
         v = S7Variable.parse("db200.byte0")
         assert v.db == 200
-        assert v.type == S7Type.BYTE
+        assert v.type == DataType.BYTE
 
     def test_parse_invalid_format(self):
         with pytest.raises(ValueError, match="Invalid variable spec"):
@@ -300,7 +300,7 @@ class TestS7AreaParsing:
         v = S7Variable.parse("EB.Byte0")
         assert v.area == S7Area.EB
         assert v.db == 0
-        assert v.type == S7Type.BYTE
+        assert v.type == DataType.BYTE
         assert v.offset == 0
         assert v.spec == "EB.Byte0"
 
@@ -316,7 +316,7 @@ class TestS7AreaParsing:
     def test_parse_ct(self):
         v = S7Variable.parse("CT.Word0")
         assert v.area == S7Area.CT
-        assert v.type == S7Type.WORD
+        assert v.type == DataType.WORD
 
     def test_parse_tm(self):
         v = S7Variable.parse("TM.Word0")
@@ -325,7 +325,7 @@ class TestS7AreaParsing:
     def test_parse_eb_bit(self):
         v = S7Variable.parse("EB.Bit0.3")
         assert v.area == S7Area.EB
-        assert v.type == S7Type.BIT
+        assert v.type == DataType.BIT
         assert v.extra == 3
         assert v.spec == "EB.Bit0.3"
 
