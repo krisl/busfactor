@@ -36,6 +36,7 @@ class ConnectionConfig:
     input_size: int = 32
     output_size: int = 32
     rpi_ms: int = 50
+    verbose: bool = False
 
     @property
     def display(self) -> str:

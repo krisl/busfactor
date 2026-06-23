@@ -181,6 +181,7 @@ def resolve_runtime(cfg: S7MonitorConfig) -> ResolvedRuntime:
             input_size=cfg.input_size if cfg.input_size is not None else 32,
             output_size=cfg.output_size if cfg.output_size is not None else 32,
             rpi_ms=cfg.rpi_ms if cfg.rpi_ms is not None else 50,
+            verbose=cfg.verbose,
         )
         connection: Connection = EIPConnection(conn_config)
     else:
@@ -239,6 +240,13 @@ def resolve_runtime(cfg: S7MonitorConfig) -> ResolvedRuntime:
 
     rules_engine = build_rules_engine(cfg.rules)
 
+    if cfg.verbose:
+        import sys
+        print(f"[config] protocol={protocol} address={final_address}", file=sys.stderr, flush=True)
+        print(f"[config] read_groups:", file=sys.stderr, flush=True)
+        for g in read_groups:
+            print(f"  source={g.source!r} start={g.start} size={g.size}", file=sys.stderr, flush=True)
+
     return ResolvedRuntime(
         connection=connection,
         variables=parsed_vars,
@@ -267,6 +275,7 @@ def load_merged_config(
     variables: tuple[str, ...],
     log_file: str | None,
     log_format: str | None,
+    verbose: bool = False,
 ) -> S7MonitorConfig:
     """Load an optional YAML config file and overlay CLI overrides.
 
@@ -296,6 +305,7 @@ def load_merged_config(
         variables=variables,
         log_file=log_file,
         log_format=log_format,
+        verbose=verbose,
     )
 
 
@@ -334,6 +344,7 @@ def load_merged_config(
     default=None,
     help="Log file format (default: csv).",
 )
+@click.option("-v", "--verbose", is_flag=True, default=False, help="Verbose connection debug output.")
 def main(
     address: str | None,
     variables: tuple[str, ...],
@@ -349,6 +360,7 @@ def main(
     write_mode: str | None,
     log_file: str | None,
     log_format: str | None,
+    verbose: bool = False,
 ) -> None:
     """s7pymon — Live S7 PLC data monitor.
 
@@ -395,6 +407,7 @@ def main(
         variables=variables,
         log_file=log_file,
         log_format=log_format,
+        verbose=verbose,
     )
 
     try:
