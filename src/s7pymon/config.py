@@ -175,4 +175,5 @@ class S7MonitorConfig:
             output_size=output_size if output_size is not None else self.output_size,
             rpi_ms=rpi_ms if rpi_ms is not None else self.rpi_ms,
             verbose=verbose if verbose is not None else self.verbose,
+            rules=self.rules,
         )
