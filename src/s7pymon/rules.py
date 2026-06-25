@@ -48,6 +48,15 @@ class RulesEngine:
         self._counters: dict[_RuleKey, int] = {}
         self._toggle_state: dict[_RuleKey, bool] = {}
         self._pulse_remaining: dict[_RuleKey, int] = {}
+        self._verbose: bool = False
+
+    def set_verbose(self, v: bool) -> None:
+        self._verbose = v
+
+    def _debug(self, msg: str) -> None:
+        if self._verbose:
+            import sys
+            print(f"[rules] {msg}", file=sys.stderr, flush=True)
 
     @property
     def rules(self) -> list[OutputRule]:
@@ -63,6 +72,7 @@ class RulesEngine:
     def apply(
         self, connection: Connection, current_values: dict[str, str]
     ) -> None:
+        self._debug(f"apply() with {len(self._rules)} rules, {len(current_values)} values")
         for rule in self._rules:
             if isinstance(rule, FollowRule):
                 self._apply_follow(rule, connection, current_values)
@@ -79,7 +89,9 @@ class RulesEngine:
     ) -> None:
         formatted = current_values.get(rule.source)
         if formatted is None:
+            self._debug(f"follow {rule.target} <- {rule.source}: source not in current_values, skipping")
             return
+        self._debug(f"follow {rule.target} <- {rule.source}: value={formatted}")
         target_var = S7Variable.parse(rule.target)
         parsed = target_var.parse_input(formatted)
         if target_var.type == DataType.BIT:
@@ -97,11 +109,13 @@ class RulesEngine:
         key = id(rule)
         counter = self._counters.get(key, 0) + 1
         target_var = S7Variable.parse(rule.target)
+        self._debug(f"toggle {rule.target} period={rule.period} counter={counter}/{rule.period}")
 
         if counter >= rule.period:
             self._counters[key] = 0
             state = self._toggle_state.get(key, False)
             self._toggle_state[key] = not state
+            self._debug(f"toggle {rule.target} -> firing, new_state={not state}")
             self._write_toggle_state(connection, target_var, not state)
         else:
             self._counters[key] = counter

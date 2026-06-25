@@ -98,7 +98,7 @@ class RuntimeConfigError(ValueError):
     """Raised when a merged config cannot be turned into a runnable runtime."""
 
 
-def build_rules_engine(rules_cfg: dict[str, dict[str, Any]]) -> RulesEngine | None:
+def build_rules_engine(rules_cfg: dict[str, dict[str, Any]], verbose: bool = False) -> RulesEngine | None:
     """Build a :class:`RulesEngine` from a rules config dict.
 
     The dict maps target variable spec -> rule definition:
@@ -130,7 +130,10 @@ def build_rules_engine(rules_cfg: dict[str, dict[str, Any]]) -> RulesEngine | No
                 f"Unknown rule type for {target!r}: expected 'follow', 'toggle', "
                 f"or 'pulse', got keys {list(rule_def.keys())}"
             )
-    return RulesEngine(rules)
+    engine = RulesEngine(rules)
+    if verbose:
+        engine.set_verbose(True)
+    return engine
 
 
 @dataclass
@@ -238,7 +241,7 @@ def resolve_runtime(cfg: S7MonitorConfig) -> ResolvedRuntime:
             "Provide variable specs or --db and --size for raw range mode."
         )
 
-    rules_engine = build_rules_engine(cfg.rules)
+    rules_engine = build_rules_engine(cfg.rules, verbose=cfg.verbose)
 
     if cfg.verbose:
         import sys
