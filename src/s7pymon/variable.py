@@ -35,7 +35,7 @@ class S7Area(Enum):
     DB = "DB"    # Data Blocks
     EB = "EB"    # Process Image Input  (Eingangsbereich / PE)
     AB = "AB"    # Process Image Output (Ausgangsbereich / PA)
-    MB = "MB"    # Merkers / Flags      (Merkerbereich / MK)
+    MB = "MB"    # Merkers / Flags      (Merkerebereich / MK)
     CT = "CT"    # Counters
     TM = "TM"    # Timers
 
@@ -102,20 +102,20 @@ S7Type = DataType
 
 # Pattern: DB<num>.<Type><offset>[.<extra>]
 _DB_VAR_PATTERN = re.compile(
-    r"^DB(\d+)\.(Byte|Int|DInt|Word|DWord|Real|Bit|String|Chars)(\d+)(?:\.(\d+))?$",
+    r"^DB(\d+)\.(Byte|Int|DInt|Word|DWord|Real|Bit|String|Chars)(\d+)(?:\.([0-9a-fA-F]+))?$",
     re.IGNORECASE,
 )
 
 # Pattern: <Area>.<Type><offset>[.<extra>]  (for EB, AB, MB, CT, TM)
 _AREA_VAR_PATTERN = re.compile(
-    r"^(EB|AB|MB|CT|TM)\.(Byte|Int|DInt|Word|DWord|Real|Bit|String|Chars)(\d+)(?:\.(\d+))?$",
+    r"^(EB|AB|MB|CT|TM)\.(Byte|Int|DInt|Word|DWord|Real|Bit|String|Chars)(\d+)(?:\.([0-9a-fA-F]+))?$",
     re.IGNORECASE,
 )
 
 # Pattern: EIP.<Assembly>.<Type><offset>[.<extra>]
 _EIP_VAR_PATTERN = re.compile(
     r"^EIP\.(Input|Output|Config|\d+)\.(Byte|Int|DInt|Word|DWord|Real|Bit|String|Chars)"
-    r"(\d+)(?:\.(\d+))?$",
+    r"(\d+)(?:\.([0-9a-fA-F]+))?$",
     re.IGNORECASE,
 )
 
@@ -141,6 +141,12 @@ def _decode_value(data: bytes | bytearray, data_type: DataType, extra: int | Non
     if data_type == DataType.CHARS:
         return raw.rstrip(b"\x00").decode("ascii", errors="replace")
 
+    if data_type in (DataType.WORD, DataType.DWORD) and extra is not None:
+        fmt = data_type.struct_format
+        assert fmt is not None
+        register = struct.unpack(fmt, raw)[0]
+        return bool(register & (1 << extra))
+
     fmt = data_type.struct_format
     assert fmt is not None
     return struct.unpack(fmt, raw)[0]
@@ -149,6 +155,9 @@ def _decode_value(data: bytes | bytearray, data_type: DataType, extra: int | Non
 def _encode_value(data_type: DataType, extra: int | None, value: Union[int, float, bool, str]) -> bytearray:
     if data_type == DataType.BIT:
         raise ValueError("Cannot encode full byte for Bit type; use encode_bit() instead")
+
+    if data_type in (DataType.WORD, DataType.DWORD) and extra is not None:
+        raise ValueError(f"Cannot encode whole register for bit-addressed {data_type.value}; use read-modify-write instead")
 
     if data_type == DataType.STRING:
         assert extra is not None
@@ -209,6 +218,16 @@ def _parse_input(data_type: DataType, text: str) -> Union[int, float, bool, str]
     return int(text)
 
 
+def _parse_extra(extra_str: str | None, data_type: DataType) -> int | None:
+    if extra_str is None:
+        return None
+    if data_type in (DataType.WORD, DataType.DWORD):
+        if any(c in extra_str for c in "abcdefABCDEF"):
+            return int(extra_str, 16)
+        return int(extra_str, 10)
+    return int(extra_str, 10)
+
+
 def _validate_type(extra: int | None, data_type: DataType, spec: str) -> None:
     if data_type == DataType.BIT:
         if extra is None:
@@ -218,6 +237,10 @@ def _validate_type(extra: int | None, data_type: DataType, spec: str) -> None:
     if data_type in (DataType.STRING, DataType.CHARS) and extra is None:
         type_name = data_type.value
         raise ValueError(f"{type_name} variable requires max length: {spec} (e.g. DB200.{type_name}50.20)")
+    if data_type == DataType.WORD and extra is not None and not 0 <= extra <= 15:
+        raise ValueError(f"Word bit must be 0-15 (0x0-0xf), got {extra} in {spec}")
+    if data_type == DataType.DWORD and extra is not None and not 0 <= extra <= 31:
+        raise ValueError(f"DWord bit must be 0-31 (0x0-0x1f), got {extra} in {spec}")
 
 
 _type_map: dict[str, DataType] = {str(t.value).lower(): t for t in DataType}
@@ -234,7 +257,7 @@ class S7Variable:
     db: int  # DB number for DB area; 0 for non-DB areas
     type: DataType
     offset: int
-    extra: int | None = None  # bit number for Bit, max length for String
+    extra: int | None = None  # bit number for Bit, max length for String/Chars, hex bit for Word/DWord
     label: str | None = None  # optional human-readable name
     area: S7Area = S7Area.DB  # memory area
 
@@ -286,8 +309,8 @@ class S7Variable:
             type_name = m.group(2)
             offset = int(m.group(3))
             extra_str = m.group(4)
-            extra = int(extra_str) if extra_str is not None else None
             data_type = _parse_type_name(type_name)
+            extra = _parse_extra(extra_str, data_type)
             _validate_type(extra, data_type, spec)
             return cls(db=db, type=data_type, offset=offset, extra=extra, label=label, area=S7Area.DB)
         m = _AREA_VAR_PATTERN.match(spec)
@@ -298,8 +321,8 @@ class S7Variable:
             type_name = m.group(2)
             offset = int(m.group(3))
             extra_str = m.group(4)
-            extra = int(extra_str) if extra_str is not None else None
             data_type = _parse_type_name(type_name)
+            extra = _parse_extra(extra_str, data_type)
             _validate_type(extra, data_type, spec)
             return cls(db=0, type=data_type, offset=offset, extra=extra, label=label, area=area)
         raise ValueError(
@@ -323,10 +346,22 @@ class S7Variable:
         return _encode_bit_value(self.extra, current_byte, value)
 
     def format_value(self, value: Union[int, float, bool, str]) -> str:
+        if self.type in (DataType.WORD, DataType.DWORD) and self.extra is not None:
+            return "1" if value else "0"
         return _format_value(self.type, value)
 
     def parse_input(self, text: str) -> Union[int, float, bool, str]:
+        if self.type in (DataType.WORD, DataType.DWORD) and self.extra is not None:
+            text = text.strip()
+            if text.lower() in ("1", "true", "on", "yes"):
+                return True
+            if text.lower() in ("0", "false", "off", "no"):
+                return False
+            raise ValueError(f"Invalid bit value: {text!r}")
         return _parse_input(self.type, text)
+
+
+# ---------------------------------------------------------------- EIPVariable
 
 
 @dataclass(frozen=True)
@@ -383,9 +418,18 @@ class EIPVariable:
         return _encode_bit_value(self.extra, current_byte, value)
 
     def format_value(self, value: Union[int, float, bool, str]) -> str:
+        if self.type in (DataType.WORD, DataType.DWORD) and self.extra is not None:
+            return "1" if value else "0"
         return _format_value(self.type, value)
 
     def parse_input(self, text: str) -> Union[int, float, bool, str]:
+        if self.type in (DataType.WORD, DataType.DWORD) and self.extra is not None:
+            text = text.strip()
+            if text.lower() in ("1", "true", "on", "yes"):
+                return True
+            if text.lower() in ("0", "false", "off", "no"):
+                return False
+            raise ValueError(f"Invalid bit value: {text!r}")
         return _parse_input(self.type, text)
 
 
@@ -395,8 +439,8 @@ def _parse_eip(m: re.Match, label: str | None = None) -> EIPVariable:
     type_name = m.group(2)
     offset = int(m.group(3))
     extra_str = m.group(4)
-    extra = int(extra_str) if extra_str is not None else None
     data_type = _parse_type_name(type_name)
+    extra = _parse_extra(extra_str, data_type)
     spec = m.group(0)
     _validate_type(extra, data_type, spec)
     return EIPVariable(assembly=assembly, type=data_type, offset=offset, extra=extra, label=label)
