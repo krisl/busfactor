@@ -707,7 +707,6 @@ class S7MonitorApp(App):
                 # Determine change styling
                 prev = self._previous_values.get(var.spec)
                 changed = prev is not None and prev != formatted
-                style = "bold yellow" if changed else ""
 
                 # Log change to file
                 if changed and self._data_logger is not None:
@@ -722,15 +721,19 @@ class S7MonitorApp(App):
                         raw_hex=raw_hex,
                     ))
 
-                # Update row (only on change to reduce DataTable churn)
+                # Update row (skip when value unchanged since previous poll)
                 row_key = self._row_keys.get(id(var))
                 if row_key is None:
                     continue
-                if changed:
+                if prev is None:
+                    # First poll — populate cell without flash
                     side = self._var_side(var)
-                    table = self._tables[side]
-                    table.update_cell(row_key, self.COL_VALUE, Text(formatted, style="bold yellow"))
-                    table.update_cell(row_key, self.COL_RAW_HEX, raw_hex)
+                    self._tables[side].update_cell(row_key, self.COL_VALUE, formatted)
+                    self._tables[side].update_cell(row_key, self.COL_RAW_HEX, raw_hex)
+                elif changed:
+                    side = self._var_side(var)
+                    self._tables[side].update_cell(row_key, self.COL_VALUE, Text(formatted, style="bold yellow"))
+                    self._tables[side].update_cell(row_key, self.COL_RAW_HEX, raw_hex)
 
             except Exception as e:
                 row_key = self._row_keys.get(id(var))
