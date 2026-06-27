@@ -40,7 +40,7 @@ from .eip import EIPConnection
 from .errors import dump_errors
 from .engine import ReadGroup, WriteMode
 from .logging import LogFormat
-from .protocols import Connection, ConnectionConfig
+from .protocols import Connection, ConnectionConfig, DataSource
 from .field_vars import expand_field_vars
 from .rules import FollowRule, OutputRule, PulseRule, RulesEngine, ToggleRule
 from .variable import S7Area, DataType, S7Variable, EIPVariable, compute_read_range
@@ -239,6 +239,18 @@ def resolve_runtime(cfg: S7MonitorConfig) -> ResolvedRuntime:
                 elif "output" in src:
                     group.start = 0
                     group.size = max(group.size, cfg.output_size or 32)
+
+            # Ensure all configured assemblies have a read group even when
+            # no variable references them (common with field_vars for Input only)
+            existing = {str(g.source) for g in read_groups}
+            for name, default_asm, default_size in [
+                ("Input", cfg.input_assembly or 101, cfg.input_size or 32),
+                ("Output", cfg.output_assembly or 100, cfg.output_size or 32),
+            ]:
+                src = DataSource.eip(name)
+                if str(src) not in existing:
+                    read_groups.append(ReadGroup(start=0, size=default_size, _source=src))
+            read_groups.sort(key=lambda g: str(g.source))
 
     elif protocol == "s7" and cfg.db is not None and cfg.size is not None:
         db_start_val = cfg.start if cfg.start is not None else 0
