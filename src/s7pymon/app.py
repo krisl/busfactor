@@ -136,7 +136,7 @@ class HexDumpDisplay(Static):
                     byte_abs = start + i + j
                     pair = f"{b:02X}"
                     if byte_abs in self._changed_abs_offsets:
-                        result.append(Text(pair, style="bold orange"))
+                        result.append(Text(pair, style="bold #FF8800"))
                     else:
                         result.append(pair)
                     if j == 7 and len(chunk) > 8:
