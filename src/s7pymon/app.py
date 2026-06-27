@@ -116,7 +116,6 @@ class HexDumpDisplay(Static):
         super().__init__(**kwargs)
         self._group_data: list[tuple[str, bytearray, int]] = []
         self._flash_cycles: dict[int, int] = {}  # abs_offset -> remaining cycles
-        self._pending_flash: set[int] = set()
         self._selected_abs_offsets: dict[str, set[int]] = {}
         self._interesting_abs_offsets: set[int] | None = None
         self._hex_shape: tuple[tuple[str, int], ...] = ()
@@ -232,34 +231,21 @@ class HexDumpDisplay(Static):
     def _update_flash(self, new_changed: set[int]) -> set[int]:
         """Advance flash state by one poll cycle.
 
-        Returns absolute offsets whose flash state *changed* (started,
-        expired, or turned off for a pending cycle).
+        Every changed byte gets a fresh counter.  Unchanged bytes
+        count down and expire.  No re-change blink-off — that
+        caused orange/white alternation when a byte changed every
+        cycle.
         """
         affected: set[int] = set()
-        just_activated: set[int] = set()
 
-        # 1. Activate pending bytes (were off for the previous cycle)
-        for off in list(self._pending_flash):
+        # Fresh or re-changed — reset counter
+        for off in new_changed:
+            was_active = off in self._flash_cycles
             self._flash_cycles[off] = self.FLASH_DURATION
-            self._pending_flash.discard(off)
-            just_activated.add(off)
-            affected.add(off)
+            if not was_active:
+                affected.add(off)
 
-        # 2. Re-changed: was flashing *before* this call AND changed again
-        currently_flashing = set(self._flash_cycles.keys())
-        re_changed = (currently_flashing - just_activated) & new_changed
-        for off in re_changed:
-            del self._flash_cycles[off]
-        self._pending_flash |= re_changed
-        affected |= re_changed
-
-        # 3. Fresh changes: new, not currently flashing, not pending
-        fresh = new_changed - currently_flashing - self._pending_flash
-        for off in fresh:
-            self._flash_cycles[off] = self.FLASH_DURATION
-        affected |= fresh
-
-        # 4. Decrement non-changed counters — expire at zero
+        # Decrement non-changed counters — expire at zero
         for off in list(self._flash_cycles.keys()):
             if off not in new_changed:
                 self._flash_cycles[off] -= 1
@@ -974,7 +960,9 @@ class S7MonitorApp(App):
                 # Bytes changed — skip if this var's range doesn't overlap
                 var_end = var.offset + var.byte_size
                 if not any(var.offset <= o < var_end for o in var_offsets):
-                    continue
+                    # Still need to clear flash if this var was highlighted
+                    if var.spec not in self._flash_active:
+                        continue
 
             group_data = results.get(group_key)
             if group_data is None:
