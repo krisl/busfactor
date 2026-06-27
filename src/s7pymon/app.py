@@ -114,7 +114,9 @@ class HexDumpDisplay(Static):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._group_data: list[tuple[str, bytearray, int]] = []
-        self._flash_cycles: dict[int, int] = {}  # abs_offset -> remaining cycles
+        # Flash keyed by "{label}:{abs_offset}" so groups with same
+        # starting offset (e.g. EIP Input/Output) don't collide.
+        self._flash_cycles: dict[str, int] = {}
         self._selected_abs_offsets: dict[str, set[int]] = {}
         self._interesting_abs_offsets: set[int] | None = None
         self._hex_shape: tuple[tuple[str, int], ...] = ()
@@ -125,6 +127,11 @@ class HexDumpDisplay(Static):
 
     @property
     def _changed_abs_offsets(self) -> set[int]:
+        """Legacy — absolute offsets across all groups (lossy for colliding offsets)."""
+        return {int(k.split(":", 1)[1]) for k in self._flash_cycles}
+
+    @property
+    def _changed_flash_keys(self) -> set[str]:
         return set(self._flash_cycles.keys())
 
     @staticmethod
@@ -161,10 +168,18 @@ class HexDumpDisplay(Static):
         self._rebuild_some_lines(self._lines_for_offsets(affected))
         self._region_refresh(affected)
 
+    @staticmethod
+    def _flash_key(label: str, abs_offset: int) -> str:
+        return f"{label}:{abs_offset}"
+
+    @staticmethod
+    def _abs_from_keys(keys: set[str]) -> set[int]:
+        return {int(k.split(":", 1)[1]) for k in keys}
+
     def set_data(
         self,
         group_data: list[tuple[str, bytearray, int]],
-        changed_abs_offsets: set[int] | None = None,
+        changed_per_group: dict[str, set[int]] | None = None,
         interesting_abs_offsets: set[int] | None = None,
     ) -> None:
         self._group_data = group_data
@@ -173,7 +188,12 @@ class HexDumpDisplay(Static):
         needs_layout = shape != self._hex_shape
         self._hex_shape = shape
 
-        new_changed = changed_abs_offsets or set()
+        # Convert per-group changes to qualified flash keys
+        new_changed: set[str] = set()
+        if changed_per_group:
+            for label, offsets in changed_per_group.items():
+                for off in offsets:
+                    new_changed.add(self._flash_key(label, off))
         flash_affected = self._update_flash(new_changed)
 
         # First data or shape change — full rebuild
@@ -181,9 +201,10 @@ class HexDumpDisplay(Static):
             self._rebuild_lines()
             self.refresh(layout=needs_layout)
         elif new_changed or flash_affected:
-            affected = new_changed | flash_affected
-            self._rebuild_some_lines(self._lines_for_offsets(affected))
-            self._region_refresh(affected)
+            affected_keys = new_changed | flash_affected
+            abs_off = self._abs_from_keys(affected_keys)
+            self._rebuild_some_lines(self._lines_for_offsets(abs_off))
+            self._region_refresh(abs_off)
 
     # -- Reactives ------------------------------------------------------------
 
@@ -246,30 +267,27 @@ class HexDumpDisplay(Static):
 
     # -- Flash cycle management -----------------------------------------------
 
-    def _update_flash(self, new_changed: set[int]) -> set[int]:
+    def _update_flash(self, new_changed: set[str]) -> set[str]:
         """Advance flash state by one poll cycle.
 
+        *new_changed* is a set of qualified keys ``"{label}:{abs}"``.
         Every changed byte gets a fresh counter.  Unchanged bytes
-        count down and expire.  No re-change blink-off — that
-        caused orange/white alternation when a byte changed every
-        cycle.
+        count down and expire.  No re-change blink-off.
         """
-        affected: set[int] = set()
+        affected: set[str] = set()
 
-        # Fresh or re-changed — reset counter
-        for off in new_changed:
-            was_active = off in self._flash_cycles
-            self._flash_cycles[off] = self.FLASH_DURATION
+        for key in new_changed:
+            was_active = key in self._flash_cycles
+            self._flash_cycles[key] = self.FLASH_DURATION
             if not was_active:
-                affected.add(off)
+                affected.add(key)
 
-        # Decrement non-changed counters — expire at zero
-        for off in list(self._flash_cycles.keys()):
-            if off not in new_changed:
-                self._flash_cycles[off] -= 1
-                if self._flash_cycles[off] <= 0:
-                    del self._flash_cycles[off]
-                    affected.add(off)
+        for key in list(self._flash_cycles.keys()):
+            if key not in new_changed:
+                self._flash_cycles[key] -= 1
+                if self._flash_cycles[key] <= 0:
+                    del self._flash_cycles[key]
+                    affected.add(key)
 
         return affected
 
@@ -335,7 +353,6 @@ class HexDumpDisplay(Static):
         chunk = data[byte_start:byte_start + 16]
         abs_line = start + byte_start
         group_selected = self._selected_abs_offsets.get(label, set())
-        changed = self._changed_abs_offsets
         interesting_abs = self._interesting_abs_offsets
 
         segs: list[Segment] = []
@@ -343,19 +360,22 @@ class HexDumpDisplay(Static):
 
         for j, b in enumerate(chunk):
             byte_abs = start + byte_start + j
+            flash_key = self._flash_key(label, byte_abs)
             pair = f"{b:02X}"
             interesting = interesting_abs is None or byte_abs in interesting_abs
 
-            if byte_abs in group_selected and byte_abs in self._flash_cycles:
-                flash_style = self._flash_style_for(self._flash_cycles[byte_abs])
-                if flash_style:
-                    style = Style.parse(f"bold reverse {flash_style}")
+            if byte_abs in group_selected and flash_key in self._flash_cycles:
+                cycles = self._flash_cycles[flash_key]
+                fs = self._flash_style_for(cycles)
+                if fs:
+                    style = Style.parse(f"bold reverse {fs}")
                 else:
                     style = Style.parse("bold reverse")
-            elif byte_abs in self._flash_cycles:
-                flash_style = self._flash_style_for(self._flash_cycles[byte_abs])
-                if flash_style:
-                    style = Style.parse(flash_style)
+            elif flash_key in self._flash_cycles:
+                cycles = self._flash_cycles[flash_key]
+                fs = self._flash_style_for(cycles)
+                if fs:
+                    style = Style.parse(fs)
                 else:
                     style = Style()
             elif byte_abs in group_selected:
@@ -940,6 +960,7 @@ class S7MonitorApp(App):
 
         # Build hex dump — use pre-computed changed offsets, no byte loop
         hex_groups: list[tuple[str, bytearray, int]] = []
+        changed_per_group: dict[str, set[int]] = {}
         all_changed_abs: set[int] = set()
         for group in self._read_groups:
             entry = results.get(group.key)
@@ -949,13 +970,14 @@ class S7MonitorApp(App):
             hex_groups.append((group.label, data, start))
             offsets = changed_offsets.get(group.key)
             if offsets:
+                changed_per_group[group.label] = offsets
                 all_changed_abs.update(offsets)
 
         all_interesting = self._all_interesting_abs or None
 
         hd = self._hex_dump
         assert hd is not None
-        hd.set_data(hex_groups, all_changed_abs, interesting_abs_offsets=all_interesting or None)
+        hd.set_data(hex_groups, changed_per_group or None, interesting_abs_offsets=all_interesting or None)
 
         # Update connection status
         conn_status = self.query_one("#conn-status", ConnectionStatus)

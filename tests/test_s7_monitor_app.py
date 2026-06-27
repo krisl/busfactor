@@ -189,7 +189,7 @@ class TestHexFlash:
         """Changed bytes have _changed_abs_offsets and render shows the byte."""
         hd = HexDumpDisplay()
         data = bytearray([0x41, 0x42, 0x43])
-        hd.set_data([("DB1", data, 0)], changed_abs_offsets={1})
+        hd.set_data([("DB1", data, 0)], changed_per_group={"DB1": {1}})
         assert 1 in hd._changed_abs_offsets
         assert 0 not in hd._changed_abs_offsets
         rendered = hd.render()
@@ -203,7 +203,7 @@ class TestHexFlash:
         # Initial data: bytes [0x41, 0x42, 0x43] at offset 0
         hd.set_data([("DB1", bytearray([0x41, 0x42, 0x43]), 0)])
         # Changed data: byte at offset 1 changed from 0x42 → 0xEE, others unchanged
-        hd.set_data([("DB1", bytearray([0x41, 0xEE, 0x43]), 0)], changed_abs_offsets={1})
+        hd.set_data([("DB1", bytearray([0x41, 0xEE, 0x43]), 0)], changed_per_group={"DB1": {1}})
 
         # Line 0 = separator, line 1 = hex data for 3 bytes at offset 0
         strip = hd.render_line(1)
@@ -232,7 +232,7 @@ class TestHexFlash:
         hd.set_data([
             ("Input", bytearray(range(16)), 0),
             ("Output", bytearray([0x10, 0xFF, *range(18, 32)]), 16),
-        ], changed_abs_offsets={17})
+        ], changed_per_group={"Output": {17}})
 
         # Output data at render_line(3) (sep=0, Input=1, sep=2, Output=3)
         out = hd.render_line(3)
