@@ -430,26 +430,29 @@ class TestRowKeyLookup:
         asyncio.run(run())
 
     def test_flash_clears_on_stable_value(self, app):
-        """Flash style is cleared on first unchanged poll after a change."""
+        """Flash fades over FLASH_DURATION cycles like the hex dump."""
         async def run():
             async with app.run_test() as pilot:
                 # Call 1: populate initial value
                 app._on_data_received({"DB1": (bytearray([0x00, 0x01]), 0)}, {"DB1": set()})
                 await pilot.pause()
 
+                table = app.query_one("#var-table-output", DataTable)
+                row_key = app._row_keys.get(id(app._variables[1]))  # DB1.Byte1
+
                 # Call 2: change value → flash applied
                 app._on_data_received({"DB1": (bytearray([0x00, 0x02]), 0)}, {"DB1": {1}})
                 await pilot.pause()
-
-                table = app.query_one("#var-table-output", DataTable)
-                row_key = app._row_keys.get(id(app._variables[1]))  # DB1.Byte1
                 cell = table.get_cell(row_key, app.COL_VALUE)
                 assert isinstance(cell, Text)
 
-                # Call 3: same value → flash cleared (plain text restored)
-                app._on_data_received({"DB1": (bytearray([0x00, 0x02]), 0)}, {"DB1": set()})
-                await pilot.pause()
+                # Calls 3..N: unchanged value — flash persists for FLASH_DURATION cycles
+                from s7pymon.app import HexDumpDisplay
+                for _ in range(HexDumpDisplay.FLASH_DURATION):
+                    app._on_data_received({"DB1": (bytearray([0x00, 0x02]), 0)}, {"DB1": set()})
+                    await pilot.pause()
 
+                # After FLASH_DURATION unchanged cycles, flash must be cleared
                 cell2 = table.get_cell(row_key, app.COL_VALUE)
                 assert not isinstance(cell2, Text)
 

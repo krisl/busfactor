@@ -120,6 +120,7 @@ class HexDumpDisplay(Static):
         self._hex_shape: tuple[tuple[str, int], ...] = ()
         self._lines: list[Strip] = []
         self._line_map: list[_LineInfo] = []
+        self._hex_bg: Style = Style()
         self._rebuild_lines()
 
     @property
@@ -135,6 +136,19 @@ class HexDumpDisplay(Static):
         elif cycles == 1:
             return "dim #FF8800"
         return None
+
+    # -- Styling -------------------------------------------------------------
+
+    def _update_hex_bg(self) -> None:
+        """Read the widget CSS background and cache as a Rich Style."""
+        c = self.styles.background
+        if c is not None:
+            self._hex_bg = Style.parse(f"on {c.hex}")
+        else:
+            self._hex_bg = Style()
+
+    def on_mount(self) -> None:
+        self._update_hex_bg()
 
     # -- Public API -----------------------------------------------------------
 
@@ -192,14 +206,19 @@ class HexDumpDisplay(Static):
     # -- Line API rendering ---------------------------------------------------
 
     def _pad_width(self, strip: Strip) -> Strip:
-        """Extend a strip to widget width so background fills uniformly."""
+        """Extend a strip to widget width and fill all cells with background."""
         w = self.size.width
         if not w:
             return strip
         cur = strip.cell_length
-        if cur >= w:
-            return strip
-        return Strip([*strip._segments, Segment(" " * (w - cur))])
+        bg = self._hex_bg
+        segs = []
+        for seg in strip._segments:
+            s = (seg.style + bg) if seg.style else bg
+            segs.append(Segment(seg.text, s))
+        if cur < w:
+            segs.append(Segment(" " * (w - cur), bg))
+        return Strip(segs)
 
     def render_line(self, y: int) -> Strip:
         if self.collapsed:
@@ -606,6 +625,7 @@ class S7MonitorApp(App):
         height: auto;
         max-height: 24;
         margin: 0 0 1 0;
+        background: $surface;
     }
     HexDumpDisplay.expanded {
         max-height: 36;
@@ -677,7 +697,7 @@ class S7MonitorApp(App):
         self._row_keys: dict[int, str] = {}
         self._row_key_to_var: dict = {}
         self._previous_hex_data: dict[str, bytearray] = {}
-        self._flash_active: set[str] = set()
+        self._flash_cycles_var: dict[str, int] = {}
         self._tables: dict[str, DataTable] = {}
         self._hex_dump: HexDumpDisplay | None = None
 
@@ -929,9 +949,17 @@ class S7MonitorApp(App):
         conn_status = self.query_one("#conn-status", ConnectionStatus)
         conn_status.poll_count = self._poll_count
 
+        # Advance var flash counters (decrement all, expire at zero).
+        # Snapshot before so we can detect newly-expired specs.
+        was_flashing = set(self._flash_cycles_var)
+        for spec in list(self._flash_cycles_var):
+            self._flash_cycles_var[spec] -= 1
+            if self._flash_cycles_var[spec] <= 0:
+                del self._flash_cycles_var[spec]
+
         # Quick exit when nothing changed, no flash to clear, and
         # values already populated (don't skip first poll).
-        if not all_changed_abs and not self._flash_active and self._current_values:
+        if not all_changed_abs and not was_flashing and self._current_values:
             return
 
         # Update variable tables — only process variables in groups where
@@ -947,15 +975,14 @@ class S7MonitorApp(App):
             if var_offsets is None:
                 continue
             if not is_first and not var_offsets:
-                # No byte changes — only process to clear flash
-                if var.spec not in self._flash_active:
+                # No byte changes — only refresh if flash still active
+                if var.spec not in was_flashing:
                     continue
             elif not is_first:
                 # Bytes changed — skip if this var's range doesn't overlap
                 var_end = var.offset + var.byte_size
                 if not any(var.offset <= o < var_end for o in var_offsets):
-                    # Still need to clear flash if this var was highlighted
-                    if var.spec not in self._flash_active:
+                    if var.spec not in was_flashing:
                         continue
 
             group_data = results.get(group_key)
@@ -987,23 +1014,22 @@ class S7MonitorApp(App):
                         raw_hex=raw_hex,
                     ))
 
+                # Reset flash counter on actual value change
+                if changed:
+                    self._flash_cycles_var[var.spec] = HexDumpDisplay.FLASH_DURATION
+
+                # Build cell value with flash style
+                flashing = self._flash_cycles_var.get(var.spec, 0) > 0
                 row_key = self._row_keys.get(id(var))
                 if row_key is None:
                     continue
                 side = self._var_side(var)
                 table = self._tables[side]
-                if prev is None:
-                    cell_updates.append((table, row_key, self.COL_VALUE, formatted))
-                    cell_updates.append((table, row_key, self.COL_RAW_HEX, raw_hex))
-                    self._flash_active.discard(var.spec)
-                elif changed:
+                if flashing:
                     cell_updates.append((table, row_key, self.COL_VALUE, Text(formatted, style="bold yellow")))
-                    cell_updates.append((table, row_key, self.COL_RAW_HEX, raw_hex))
-                    self._flash_active.add(var.spec)
-                elif var.spec in self._flash_active:
+                else:
                     cell_updates.append((table, row_key, self.COL_VALUE, formatted))
-                    cell_updates.append((table, row_key, self.COL_RAW_HEX, raw_hex))
-                    self._flash_active.discard(var.spec)
+                cell_updates.append((table, row_key, self.COL_RAW_HEX, raw_hex))
 
             except Exception as e:
                 row_key = self._row_keys.get(id(var))
