@@ -164,9 +164,10 @@ class HexDumpDisplay(Static):
         if old == offsets:
             return
         self._selected_abs_offsets[group_label] = offsets
-        affected = (old or set()) | offsets
-        self._rebuild_some_lines(self._lines_for_offsets(affected))
-        self._region_refresh(affected)
+        affected_abs = (old or set()) | offsets
+        affected_keys = {self._flash_key(group_label, o) for o in affected_abs}
+        self._rebuild_some_lines(self._lines_for_offsets(affected_keys))
+        self._region_refresh(affected_keys)
 
     @staticmethod
     def _flash_key(label: str, abs_offset: int) -> str:
@@ -202,9 +203,8 @@ class HexDumpDisplay(Static):
             self.refresh(layout=needs_layout)
         elif new_changed or flash_affected:
             affected_keys = new_changed | flash_affected
-            abs_off = self._abs_from_keys(affected_keys)
-            self._rebuild_some_lines(self._lines_for_offsets(abs_off))
-            self._region_refresh(abs_off)
+            self._rebuild_some_lines(self._lines_for_offsets(affected_keys))
+            self._region_refresh(affected_keys)
 
     # -- Reactives ------------------------------------------------------------
 
@@ -293,13 +293,14 @@ class HexDumpDisplay(Static):
 
     # -- Helpers --------------------------------------------------------------
 
-    def _region_refresh(self, offsets: set[int]) -> None:
+    def _region_refresh(self, keys: set[str]) -> None:
         """Refresh contiguous blocks of affected lines only.
 
-        Avoids refreshing lines from other groups that happen to sit
-        between changed lines in the global line index.
+        *keys* are qualified ``"{label}:{abs_offset}"`` — only lines
+        whose group matches the key label are included, so groups
+        with the same starting offset don't collide.
         """
-        raw = sorted(self._lines_for_offsets(offsets))
+        raw = sorted(self._lines_for_offsets(keys))
         if not raw:
             return
         w = self.size.width or 80
@@ -314,19 +315,29 @@ class HexDumpDisplay(Static):
                 end = idx
         self.refresh(Region(0, start, w, end - start + 1))
 
-    def _lines_for_offsets(self, offsets: set[int]) -> set[int]:
-        """Return indices of hex lines whose byte range overlaps *offsets*."""
-        if not offsets:
+    def _lines_for_offsets(self, keys: set[str]) -> set[int]:
+        """Return indices of hex lines whose (group, byte range) overlaps *keys*.
+
+        Each key is ``"{label}:{abs_offset}"`` — both label AND offset
+        must match so groups with the same starting offset (e.g. EIP
+        Input/Output) don't collide.
+        """
+        if not keys:
             return set()
         result: set[int] = set()
         for idx, info in enumerate(self._line_map):
             if info.byte_start == -1:
                 continue
-            _, data, group_start = self._group_data[info.group_idx]
+            group_label, data, group_start = self._group_data[info.group_idx]
             abs_start = group_start + info.byte_start
             chunk_len = min(16, len(data) - info.byte_start)
-            for off in offsets:
-                if abs_start <= off < abs_start + chunk_len:
+            for key in keys:
+                try:
+                    label, off_str = key.split(":", 1)
+                    off = int(off_str)
+                except (ValueError, IndexError):
+                    continue
+                if label == group_label and abs_start <= off < abs_start + chunk_len:
                     result.add(idx)
                     break
         return result

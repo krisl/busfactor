@@ -247,8 +247,8 @@ class TestHexFlash:
             if seg.style is not None and "ff8800" in str(seg.style):
                 assert False, f"Input line has flash on {seg.text!r}"
 
-        # _lines_for_offsets must return only Output lines for {17}
-        line_indices = hd._lines_for_offsets({17})
+        # _lines_for_offsets must return only Output lines for Output:17
+        line_indices = hd._lines_for_offsets({"Output:17"})
         assert line_indices == {3}
 
     def test_flash_detected_in_on_data_received(self):
