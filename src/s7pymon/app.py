@@ -9,7 +9,6 @@ A Textual-based TUI application inspired by Sharp7.Monitor that provides:
 
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Union
@@ -893,15 +892,10 @@ class S7MonitorApp(App):
                 continue
             table._data[rk][ck] = value
             touched_rows.setdefault(table, set()).add(rk)
-        for table in touched_rows:
+        for table, rks in touched_rows.items():
             table._update_count += 1
-        # Throttle row refreshes to at most once per poll interval
-        now = time.monotonic()
-        if now - getattr(self, '_last_table_refresh', 0.0) > self._poll_interval:
-            self._last_table_refresh = now
-            for table, rks in touched_rows.items():
-                for rk in rks:
-                    table.refresh_row(table.get_row_index(rk))
+            for rk in rks:
+                table.refresh_row(table.get_row_index(rk))
 
     def _on_data_received(
         self,

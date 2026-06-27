@@ -195,6 +195,32 @@ class TestHexFlash:
         rendered = hd.render()
         assert "42" in rendered.plain  # changed byte value shown
 
+    def test_data_and_flash_in_same_frame(self):
+        """set_data updates data bytes and flash highlight atomically — the
+        rendered line has both the new byte value and the flash style
+        simultaneously."""
+        hd = HexDumpDisplay()
+        # Initial data: bytes [0x41, 0x42, 0x43] at offset 0
+        hd.set_data([("DB1", bytearray([0x41, 0x42, 0x43]), 0)])
+        # Changed data: byte at offset 1 changed from 0x42 → 0xEE, others unchanged
+        hd.set_data([("DB1", bytearray([0x41, 0xEE, 0x43]), 0)], changed_abs_offsets={1})
+
+        # Line 0 = separator, line 1 = hex data for 3 bytes at offset 0
+        strip = hd.render_line(1)
+        # Find the segment for the changed byte "EE"
+        changed_segs = [s for s in strip._segments if "EE" in s.text]
+        assert changed_segs, "Changed byte 'EE' should be present in rendered output"
+        seg = changed_segs[0]
+        assert seg.style is not None
+        style_str = str(seg.style)
+        assert "ff8800" in style_str, f"Expected flash style 'ff8800' in {style_str!r}"
+
+        # Bytes that didn't change should NOT have flash style
+        unchanged_segs = [s for s in strip._segments if s.text.strip() == "41"]
+        for s in unchanged_segs:
+            if s.style is not None:
+                assert "ff8800" not in str(s.style)
+
     def test_flash_detected_in_on_data_received(self):
         """_on_data_received detects changed bytes across poll cycles."""
         grp = ReadGroup(area=S7Area.DB, db=1, start=0, size=4)
