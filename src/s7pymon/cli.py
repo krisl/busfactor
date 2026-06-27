@@ -42,10 +42,10 @@ from .engine import ReadGroup, WriteMode
 from .logging import LogFormat
 from .protocols import Connection, ConnectionConfig
 from .rules import FollowRule, OutputRule, PulseRule, RulesEngine, ToggleRule
-from .variable import S7Area, DataType, S7Variable, compute_read_range
+from .variable import S7Area, DataType, S7Variable, EIPVariable, compute_read_range
 
 
-def parse_variable_arg(arg: str) -> S7Variable:
+def parse_variable_arg(arg: str) -> S7Variable | EIPVariable:
     """Parse a CLI variable argument, supporting optional label syntax.
 
     Formats:
@@ -206,7 +206,7 @@ def resolve_runtime(cfg: S7MonitorConfig) -> ResolvedRuntime:
                 raise RuntimeConfigError(f"Error parsing variable '{v}': {e}") from e
 
         if protocol == "s7" and cfg.db is not None:
-            db_vars = [v for v in parsed_vars if hasattr(v, 'area') and v.area == S7Area.DB]
+            db_vars = [v for v in parsed_vars if isinstance(v, S7Variable) and v.area == S7Area.DB]
             db_dbs = {v.db for v in db_vars}
             if db_dbs and cfg.db not in db_dbs:
                 raise RuntimeConfigError(
