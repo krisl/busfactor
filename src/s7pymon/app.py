@@ -101,13 +101,13 @@ class HexDumpDisplay(Static):
         super().__init__(**kwargs)
         self._group_data: list[tuple[str, bytearray, int]] = []
         self._changed_abs_offsets: set[int] = set()
-        self._selected_abs_offsets: set[int] = set()
+        self._selected_abs_offsets: dict[str, set[int]] = {}
         self._interesting_abs_offsets: set[int] | None = None
 
-    def set_selected_offsets(self, offsets: set[int]) -> None:
-        if self._selected_abs_offsets == offsets:
+    def set_selected_offsets(self, group_label: str, offsets: set[int]) -> None:
+        if self._selected_abs_offsets.get(group_label) == offsets:
             return
-        self._selected_abs_offsets = offsets
+        self._selected_abs_offsets[group_label] = offsets
         self.refresh()
 
     def watch_collapsed(self, old_val: bool, new_val: bool) -> None:
@@ -150,9 +150,10 @@ class HexDumpDisplay(Static):
                     byte_abs = start + i + j
                     pair = f"{b:02X}"
                     interesting = self._interesting_abs_offsets is None or byte_abs in self._interesting_abs_offsets
-                    if byte_abs in self._selected_abs_offsets and byte_abs in self._changed_abs_offsets:
+                    group_selected = self._selected_abs_offsets.get(label, set())
+                    if byte_abs in group_selected and byte_abs in self._changed_abs_offsets:
                         result.append(Text(pair, style="bold reverse #FF8800"))
-                    elif byte_abs in self._selected_abs_offsets:
+                    elif byte_abs in group_selected:
                         result.append(Text(pair, style="bold reverse"))
                     elif byte_abs in self._changed_abs_offsets:
                         result.append(Text(pair, style="bold #FF8800"))
@@ -781,7 +782,7 @@ class S7MonitorApp(App):
         hd = self._hex_dump
         if hd is None or hd.collapsed:
             return
-        hd.set_selected_offsets(set(range(var.offset, var.offset + var.byte_size)))
+        hd.set_selected_offsets(group_key, set(range(var.offset, var.offset + var.byte_size)))
 
     def _update_connection_state(self) -> None:
         conn_status = self.query_one("#conn-status", ConnectionStatus)

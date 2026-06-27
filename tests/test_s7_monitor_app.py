@@ -132,16 +132,16 @@ class TestHexSelection:
         )
 
     def test_set_selected_offsets(self):
-        """set_selected_offsets stores offsets."""
+        """set_selected_offsets stores offsets per group."""
         hd = HexDumpDisplay()
-        hd.set_selected_offsets({1, 2, 3})
-        assert hd._selected_abs_offsets == {1, 2, 3}
+        hd.set_selected_offsets("DB1", {1, 2, 3})
+        assert hd._selected_abs_offsets == {"DB1": {1, 2, 3}}
 
     def test_selected_bytes_in_render(self):
         """Selected bytes appear in rendered output."""
         hd = HexDumpDisplay()
         data = bytearray([0x41, 0x42, 0x43, 0x44])
-        hd.set_selected_offsets({2, 3})
+        hd.set_selected_offsets("DB1", {2, 3})
         hd.set_data([("DB1", data, 0)])
         rendered = hd.render()
         assert "43 44" in rendered.plain
@@ -162,7 +162,7 @@ class TestHexSelection:
                 app.on_data_table_row_highlighted(
                     DataTable.RowHighlighted(table, cursor_row=0, row_key=RowKey(row_key))
                 )
-                assert hex_dump._selected_abs_offsets == {0}  # Byte0, 1 byte
+                assert hex_dump._selected_abs_offsets == {"DB1": {0}}  # Byte0, 1 byte
 
         asyncio.run(run())
 
