@@ -149,9 +149,11 @@ class HexDumpDisplay(Static):
 
                 remaining = 16 - len(chunk)
                 if remaining > 0:
-                    result.append("   " * remaining)
+                    hex_width = len(chunk) * 3 - 1
                     if len(chunk) > 8:
-                        result.append(" " * 3)
+                        hex_width += 1
+                    padding = 48 - hex_width
+                    result.append(" " * padding)
 
                 result.append(" │ ", style="dim cyan")
                 for b in chunk:
