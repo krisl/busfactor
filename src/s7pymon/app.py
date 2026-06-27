@@ -107,19 +107,26 @@ class _LineInfo:
 class HexDumpDisplay(Static):
     """Live hex dump of read group contents using the Line API."""
 
+    FLASH_DURATION = 3  # poll cycles
+
     collapsed: reactive[bool] = reactive(False)
     show_interesting_only: reactive[bool] = reactive(False)
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._group_data: list[tuple[str, bytearray, int]] = []
-        self._changed_abs_offsets: set[int] = set()
+        self._flash_cycles: dict[int, int] = {}  # abs_offset -> remaining cycles
+        self._pending_flash: set[int] = set()
         self._selected_abs_offsets: dict[str, set[int]] = {}
         self._interesting_abs_offsets: set[int] | None = None
         self._hex_shape: tuple[tuple[str, int], ...] = ()
         self._lines: list[Strip] = []
         self._line_map: list[_LineInfo] = []
         self._rebuild_lines()
+
+    @property
+    def _changed_abs_offsets(self) -> set[int]:
+        return set(self._flash_cycles.keys())
 
     # -- Public API -----------------------------------------------------------
 
@@ -139,23 +146,22 @@ class HexDumpDisplay(Static):
         interesting_abs_offsets: set[int] | None = None,
     ) -> None:
         self._group_data = group_data
-        self._changed_abs_offsets = changed_abs_offsets or set()
         self._interesting_abs_offsets = interesting_abs_offsets
         shape = tuple((label, len(d)) for label, d, _ in group_data)
         needs_layout = shape != self._hex_shape
         self._hex_shape = shape
-        self._rebuild_lines()
-        self.refresh(layout=needs_layout)
 
-    def clear_flash(self) -> None:
-        """Clear flash highlighting."""
-        if not self._changed_abs_offsets:
-            return
-        old = self._changed_abs_offsets
-        self._changed_abs_offsets = set()
-        affected = self._lines_for_offsets(old)
-        self._rebuild_some_lines(affected)
-        self._region_refresh(old)
+        new_changed = changed_abs_offsets or set()
+        flash_affected = self._update_flash(new_changed)
+
+        # First data or shape change — full rebuild
+        if needs_layout or not self._lines or not self._line_map:
+            self._rebuild_lines()
+            self.refresh(layout=needs_layout)
+        elif new_changed or flash_affected:
+            affected = new_changed | flash_affected
+            self._rebuild_some_lines(self._lines_for_offsets(affected))
+            self._region_refresh(affected)
 
     # -- Reactives ------------------------------------------------------------
 
@@ -210,6 +216,48 @@ class HexDumpDisplay(Static):
             for seg in strip._segments:
                 result.append(seg.text, seg.style or "")
         return result
+
+    # -- Flash cycle management -----------------------------------------------
+
+    def _update_flash(self, new_changed: set[int]) -> set[int]:
+        """Advance flash state by one poll cycle.
+
+        Returns absolute offsets whose flash state *changed* (on, off, or
+        re-changed) so the caller can do a partial rebuild.
+        """
+        affected: set[int] = set()
+
+        # 1. Re-changed bytes — flash turns off for one pending cycle
+        re_changed = self._flash_cycles.keys() & new_changed
+        for off in re_changed:
+            del self._flash_cycles[off]
+        self._pending_flash |= re_changed
+        affected |= re_changed
+
+        # 2. Pending bytes — activate with fresh counter (unless re-re-changed)
+        for off in list(self._pending_flash):
+            if off in new_changed:
+                # Changed again during the pending cycle — stay pending
+                continue
+            self._flash_cycles[off] = self.FLASH_DURATION
+            self._pending_flash.discard(off)
+            affected.add(off)
+
+        # 3. Fresh changes (not re-changed) — start flashing
+        fresh = new_changed - re_changed
+        for off in fresh:
+            self._flash_cycles[off] = self.FLASH_DURATION
+        affected |= fresh
+
+        # 4. Decrement existing counters — expire at zero
+        for off in list(self._flash_cycles.keys()):
+            if off not in new_changed:
+                self._flash_cycles[off] -= 1
+                if self._flash_cycles[off] <= 0:
+                    del self._flash_cycles[off]
+                    affected.add(off)
+
+        return affected
 
     # -- Helpers --------------------------------------------------------------
 
@@ -877,11 +925,7 @@ class S7MonitorApp(App):
 
         hd = self._hex_dump
         assert hd is not None
-        # Skip hex dump refresh when nothing changed and no stale flash
-        if all_changed_abs or not hd._group_data:
-            hd.set_data(hex_groups, all_changed_abs, interesting_abs_offsets=all_interesting or None)
-        elif hd._changed_abs_offsets:
-            hd.clear_flash()
+        hd.set_data(hex_groups, all_changed_abs, interesting_abs_offsets=all_interesting or None)
 
         # Update connection status
         conn_status = self.query_one("#conn-status", ConnectionStatus)
