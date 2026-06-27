@@ -126,11 +126,6 @@ class HexDumpDisplay(Static):
         self._rebuild_lines()
 
     @property
-    def _changed_abs_offsets(self) -> set[int]:
-        """Legacy — absolute offsets across all groups (lossy for colliding offsets)."""
-        return {int(k.split(":", 1)[1]) for k in self._flash_cycles}
-
-    @property
     def _changed_flash_keys(self) -> set[str]:
         return set(self._flash_cycles.keys())
 
@@ -165,17 +160,11 @@ class HexDumpDisplay(Static):
             return
         self._selected_abs_offsets[group_label] = offsets
         affected_abs = (old or set()) | offsets
-        affected_keys = {self._flash_key(group_label, o) for o in affected_abs}
-        self._rebuild_some_lines(self._lines_for_offsets(affected_keys))
-        self._region_refresh(affected_keys)
+        self._rebuild_and_refresh({self._flash_key(group_label, o) for o in affected_abs})
 
     @staticmethod
     def _flash_key(label: str, abs_offset: int) -> str:
         return f"{label}:{abs_offset}"
-
-    @staticmethod
-    def _abs_from_keys(keys: set[str]) -> set[int]:
-        return {int(k.split(":", 1)[1]) for k in keys}
 
     def set_data(
         self,
@@ -202,9 +191,7 @@ class HexDumpDisplay(Static):
             self._rebuild_lines()
             self.refresh(layout=needs_layout)
         elif new_changed or flash_affected:
-            affected_keys = new_changed | flash_affected
-            self._rebuild_some_lines(self._lines_for_offsets(affected_keys))
-            self._region_refresh(affected_keys)
+            self._rebuild_and_refresh(new_changed | flash_affected)
 
     # -- Reactives ------------------------------------------------------------
 
@@ -293,14 +280,9 @@ class HexDumpDisplay(Static):
 
     # -- Helpers --------------------------------------------------------------
 
-    def _region_refresh(self, keys: set[str]) -> None:
-        """Refresh contiguous blocks of affected lines only.
-
-        *keys* are qualified ``"{label}:{abs_offset}"`` — only lines
-        whose group matches the key label are included, so groups
-        with the same starting offset don't collide.
-        """
-        raw = sorted(self._lines_for_offsets(keys))
+    def _region_refresh(self, indices: set[int]) -> None:
+        """Refresh contiguous blocks of affected lines only."""
+        raw = sorted(indices)
         if not raw:
             return
         w = self.size.width or 80
@@ -314,6 +296,12 @@ class HexDumpDisplay(Static):
                 start = idx
                 end = idx
         self.refresh(Region(0, start, w, end - start + 1))
+
+    def _rebuild_and_refresh(self, keys: set[str]) -> None:
+        """Rebuild and refresh lines affected by *keys* (qualified ``"{label}:{abs}"``)."""
+        indices = self._lines_for_offsets(keys)
+        self._rebuild_some_lines(indices)
+        self._region_refresh(indices)
 
     def _lines_for_offsets(self, keys: set[str]) -> set[int]:
         """Return indices of hex lines whose (group, byte range) overlaps *keys*.
@@ -377,18 +365,10 @@ class HexDumpDisplay(Static):
 
             if byte_abs in group_selected and flash_key in self._flash_cycles:
                 cycles = self._flash_cycles[flash_key]
-                fs = self._flash_style_for(cycles)
-                if fs:
-                    style = Style.parse(f"bold reverse {fs}")
-                else:
-                    style = Style.parse("bold reverse")
+                style = Style.parse(f"bold reverse {self._flash_style_for(cycles)}")
             elif flash_key in self._flash_cycles:
                 cycles = self._flash_cycles[flash_key]
-                fs = self._flash_style_for(cycles)
-                if fs:
-                    style = Style.parse(fs)
-                else:
-                    style = Style()
+                style = Style.parse(self._flash_style_for(cycles))
             elif byte_abs in group_selected:
                 style = Style.parse("bold reverse")
             elif not interesting:
@@ -437,7 +417,6 @@ class HexDumpDisplay(Static):
 
         for gidx, (label, data, start) in enumerate(self._group_data):
             group_selected = self._selected_abs_offsets.get(label, set())
-            changed = self._changed_abs_offsets
             group_rendered = False
 
             for i in range(0, len(data), 16):
