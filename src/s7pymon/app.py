@@ -107,7 +107,7 @@ class _LineInfo:
 class HexDumpDisplay(Static):
     """Live hex dump of read group contents using the Line API."""
 
-    FLASH_DURATION = 3  # poll cycles
+    FLASH_DURATION = 4  # poll cycles: bright → bright → medium → dim → off
 
     collapsed: reactive[bool] = reactive(False)
     show_interesting_only: reactive[bool] = reactive(False)
@@ -127,6 +127,16 @@ class HexDumpDisplay(Static):
     @property
     def _changed_abs_offsets(self) -> set[int]:
         return set(self._flash_cycles.keys())
+
+    @staticmethod
+    def _flash_style_for(cycles: int) -> str | None:
+        if cycles >= 3:
+            return "bold #FF8800"
+        elif cycles == 2:
+            return "#FF8800"
+        elif cycles == 1:
+            return "dim #FF8800"
+        return None
 
     # -- Public API -----------------------------------------------------------
 
@@ -222,34 +232,34 @@ class HexDumpDisplay(Static):
     def _update_flash(self, new_changed: set[int]) -> set[int]:
         """Advance flash state by one poll cycle.
 
-        Returns absolute offsets whose flash state *changed* (on, off, or
-        re-changed) so the caller can do a partial rebuild.
+        Returns absolute offsets whose flash state *changed* (started,
+        expired, or turned off for a pending cycle).
         """
         affected: set[int] = set()
+        just_activated: set[int] = set()
 
-        # 1. Re-changed bytes — flash turns off for one pending cycle
-        re_changed = self._flash_cycles.keys() & new_changed
+        # 1. Activate pending bytes (were off for the previous cycle)
+        for off in list(self._pending_flash):
+            self._flash_cycles[off] = self.FLASH_DURATION
+            self._pending_flash.discard(off)
+            just_activated.add(off)
+            affected.add(off)
+
+        # 2. Re-changed: was flashing *before* this call AND changed again
+        currently_flashing = set(self._flash_cycles.keys())
+        re_changed = (currently_flashing - just_activated) & new_changed
         for off in re_changed:
             del self._flash_cycles[off]
         self._pending_flash |= re_changed
         affected |= re_changed
 
-        # 2. Pending bytes — activate with fresh counter (unless re-re-changed)
-        for off in list(self._pending_flash):
-            if off in new_changed:
-                # Changed again during the pending cycle — stay pending
-                continue
-            self._flash_cycles[off] = self.FLASH_DURATION
-            self._pending_flash.discard(off)
-            affected.add(off)
-
-        # 3. Fresh changes (not re-changed) — start flashing
-        fresh = new_changed - re_changed
+        # 3. Fresh changes: new, not currently flashing, not pending
+        fresh = new_changed - currently_flashing - self._pending_flash
         for off in fresh:
             self._flash_cycles[off] = self.FLASH_DURATION
         affected |= fresh
 
-        # 4. Decrement existing counters — expire at zero
+        # 4. Decrement non-changed counters — expire at zero
         for off in list(self._flash_cycles.keys()):
             if off not in new_changed:
                 self._flash_cycles[off] -= 1
@@ -320,12 +330,20 @@ class HexDumpDisplay(Static):
             pair = f"{b:02X}"
             interesting = interesting_abs is None or byte_abs in interesting_abs
 
-            if byte_abs in group_selected and byte_abs in changed:
-                style = Style.parse("bold reverse #FF8800")
+            if byte_abs in group_selected and byte_abs in self._flash_cycles:
+                flash_style = self._flash_style_for(self._flash_cycles[byte_abs])
+                if flash_style:
+                    style = Style.parse(f"bold reverse {flash_style}")
+                else:
+                    style = Style.parse("bold reverse")
+            elif byte_abs in self._flash_cycles:
+                flash_style = self._flash_style_for(self._flash_cycles[byte_abs])
+                if flash_style:
+                    style = Style.parse(flash_style)
+                else:
+                    style = Style()
             elif byte_abs in group_selected:
                 style = Style.parse("bold reverse")
-            elif byte_abs in changed:
-                style = Style.parse("bold #FF8800")
             elif not interesting:
                 style = Style.parse("dim")
             else:
