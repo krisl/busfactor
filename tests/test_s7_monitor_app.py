@@ -221,6 +221,36 @@ class TestHexFlash:
             if s.style is not None:
                 assert "ff8800" not in str(s.style)
 
+    def test_two_groups_no_cross_group_flash(self):
+        """Changing one group must not flash-style bytes in the other group."""
+        hd = HexDumpDisplay()
+        hd.set_data([
+            ("Input", bytearray(range(16)), 0),
+            ("Output", bytearray(range(16, 32)), 16),
+        ])
+        # Change only Output byte 1 (abs offset 17)
+        hd.set_data([
+            ("Input", bytearray(range(16)), 0),
+            ("Output", bytearray([0x10, 0xFF, *range(18, 32)]), 16),
+        ], changed_abs_offsets={17})
+
+        # Output data at render_line(3) (sep=0, Input=1, sep=2, Output=3)
+        out = hd.render_line(3)
+        ff = [s for s in out._segments if "FF" in s.text]
+        assert ff, "Output byte FF should be in rendered output"
+        assert ff[0].style is not None
+        assert "ff8800" in str(ff[0].style)
+
+        # Input line (render_line 1) must NOT have any flash style
+        inp = hd.render_line(1)
+        for seg in inp._segments:
+            if seg.style is not None and "ff8800" in str(seg.style):
+                assert False, f"Input line has flash on {seg.text!r}"
+
+        # _lines_for_offsets must return only Output lines for {17}
+        line_indices = hd._lines_for_offsets({17})
+        assert line_indices == {3}
+
     def test_flash_detected_in_on_data_received(self):
         """_on_data_received detects changed bytes across poll cycles."""
         grp = ReadGroup(area=S7Area.DB, db=1, start=0, size=4)

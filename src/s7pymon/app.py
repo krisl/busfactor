@@ -276,13 +276,25 @@ class HexDumpDisplay(Static):
     # -- Helpers --------------------------------------------------------------
 
     def _region_refresh(self, offsets: set[int]) -> None:
-        """Refresh the smallest region covering lines that contain *offsets*."""
-        indices = self._lines_for_offsets(offsets)
-        if not indices:
+        """Refresh contiguous blocks of affected lines only.
+
+        Avoids refreshing lines from other groups that happen to sit
+        between changed lines in the global line index.
+        """
+        raw = sorted(self._lines_for_offsets(offsets))
+        if not raw:
             return
         w = self.size.width or 80
-        m, M = min(indices), max(indices)
-        self.refresh(Region(0, m, w, M - m + 1))
+        start = raw[0]
+        end = start
+        for idx in raw[1:]:
+            if idx == end + 1:
+                end = idx
+            else:
+                self.refresh(Region(0, start, w, end - start + 1))
+                start = idx
+                end = idx
+        self.refresh(Region(0, start, w, end - start + 1))
 
     def _lines_for_offsets(self, offsets: set[int]) -> set[int]:
         """Return indices of hex lines whose byte range overlaps *offsets*."""
