@@ -457,6 +457,7 @@ class S7MonitorApp(App):
         self._row_keys: dict[int, str] = {}
         self._row_key_to_var: dict = {}
         self._previous_hex_data: dict[str, bytearray] = {}
+        self._flash_active: set[str] = set()
         self._tables: dict[str, DataTable] = {}
         self._hex_dump: HexDumpDisplay | None = None
 
@@ -730,10 +731,18 @@ class S7MonitorApp(App):
                     side = self._var_side(var)
                     self._tables[side].update_cell(row_key, self.COL_VALUE, formatted)
                     self._tables[side].update_cell(row_key, self.COL_RAW_HEX, raw_hex)
+                    self._flash_active.discard(var.spec)
                 elif changed:
                     side = self._var_side(var)
                     self._tables[side].update_cell(row_key, self.COL_VALUE, Text(formatted, style="bold yellow"))
                     self._tables[side].update_cell(row_key, self.COL_RAW_HEX, raw_hex)
+                    self._flash_active.add(var.spec)
+                elif var.spec in self._flash_active:
+                    # Flash was active, now stable — clear flash style
+                    side = self._var_side(var)
+                    self._tables[side].update_cell(row_key, self.COL_VALUE, formatted)
+                    self._tables[side].update_cell(row_key, self.COL_RAW_HEX, raw_hex)
+                    self._flash_active.discard(var.spec)
 
             except Exception as e:
                 row_key = self._row_keys.get(id(var))
