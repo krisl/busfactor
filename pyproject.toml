@@ -35,6 +35,9 @@ dev = [
 addopts = "--strict-markers"
 testpaths = ["tests"]
 
+[tool.uv.sources]
+ethernetip = { path = "../ethernetip-stuff/python-ethernetip", editable = true }
+
 [tool.ty]
 environment.root = ["."]
 # Tests are type-checked too — all test files pass cleanly.
