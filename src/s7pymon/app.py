@@ -101,6 +101,9 @@ class HexDumpDisplay(Static):
         self._group_data: list[tuple[str, bytearray, int]] = []
         self._changed_abs_offsets: set[int] = set()
 
+    def watch_collapsed(self, old_val: bool, new_val: bool) -> None:
+        self.refresh(layout=True)
+
     def set_data(
         self,
         group_data: list[tuple[str, bytearray, int]],
@@ -108,7 +111,7 @@ class HexDumpDisplay(Static):
     ) -> None:
         self._group_data = group_data
         self._changed_abs_offsets = changed_abs_offsets or set()
-        self.refresh()
+        self.refresh(layout=True)
 
     def render(self) -> Text:
         if self.collapsed:
@@ -365,6 +368,9 @@ class S7MonitorApp(App):
         height: auto;
         max-height: 24;
         margin: 0 0 1 0;
+    }
+    HexDumpDisplay.expanded {
+        max-height: 36;
     }
     #var-tables {
         height: 1fr;
