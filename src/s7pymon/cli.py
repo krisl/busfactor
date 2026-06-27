@@ -41,6 +41,7 @@ from .errors import dump_errors
 from .engine import ReadGroup, WriteMode
 from .logging import LogFormat
 from .protocols import Connection, ConnectionConfig
+from .field_vars import expand_field_vars
 from .rules import FollowRule, OutputRule, PulseRule, RulesEngine, ToggleRule
 from .variable import S7Area, DataType, S7Variable, EIPVariable, compute_read_range
 
@@ -197,13 +198,20 @@ def resolve_runtime(cfg: S7MonitorConfig) -> ResolvedRuntime:
         )
         connection = S7Connection(conn_config)
 
-    if cfg.variables:
+    if cfg.variables or cfg.field_vars:
         parsed_vars = []
         for v in cfg.variables:
             try:
                 parsed_vars.append(parse_variable_arg(v))
             except ValueError as e:
                 raise RuntimeConfigError(f"Error parsing variable '{v}': {e}") from e
+
+        if cfg.field_vars:
+            try:
+                expanded = expand_field_vars(cfg.field_vars)
+            except ValueError as e:
+                raise RuntimeConfigError(str(e)) from e
+            parsed_vars.extend(expanded)
 
         if protocol == "s7" and cfg.db is not None:
             db_vars = [v for v in parsed_vars if isinstance(v, S7Variable) and v.area == S7Area.DB]
@@ -246,9 +254,12 @@ def resolve_runtime(cfg: S7MonitorConfig) -> ResolvedRuntime:
     if cfg.verbose:
         import sys
         print(f"[config] protocol={protocol} address={final_address}", file=sys.stderr, flush=True)
+        print(f"[config] variables={len(parsed_vars)}", file=sys.stderr, flush=True)
         print(f"[config] read_groups:", file=sys.stderr, flush=True)
         for g in read_groups:
             print(f"  source={g.source!r} start={g.start} size={g.size}", file=sys.stderr, flush=True)
+        if cfg.field_vars:
+            print(f"[config] field_vars present: {list(cfg.field_vars.keys())}", file=sys.stderr, flush=True)
 
     return ResolvedRuntime(
         connection=connection,
