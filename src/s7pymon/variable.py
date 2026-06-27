@@ -265,6 +265,28 @@ def _parse_type_name(type_name: str) -> DataType:
     return _type_map[type_name.lower()]
 
 
+_BYTE_ORDER_SUFFIXES = {
+    ".le": ByteOrder.LITTLE,
+    ".be": ByteOrder.BIG,
+    ".little": ByteOrder.LITTLE,
+    ".big": ByteOrder.BIG,
+}
+
+
+def _strip_byte_order_suffix(spec: str) -> tuple[str, ByteOrder | None]:
+    """Strip a byte-order suffix (.le/.be/.little/.big) from a spec string.
+
+    Stripping before regex matching avoids ambiguity between hex bit
+    numbers (e.g. Word2.f) and byte-order suffixes (e.g. Word2.be).
+
+    Returns (stripped_spec, byte_order_or_None).
+    """
+    for suffix, bo in _BYTE_ORDER_SUFFIXES.items():
+        if spec.lower().endswith(suffix):
+            return spec[:-len(suffix)], bo
+    return spec, None
+
+
 @dataclass(frozen=True)
 class S7Variable:
     """Parsed S7 variable specification."""
@@ -321,10 +343,12 @@ class S7Variable:
         label: str | None = None,
         byte_order: ByteOrder | None = None,
     ) -> S7Variable | EIPVariable:
-        m = _EIP_VAR_PATTERN.match(spec)
+        spec_stripped, suffix_bo = _strip_byte_order_suffix(spec)
+        bo = byte_order if byte_order is not None else suffix_bo
+        m = _EIP_VAR_PATTERN.match(spec_stripped)
         if m:
-            return _parse_eip(m, label, byte_order)
-        m = _DB_VAR_PATTERN.match(spec)
+            return _parse_eip(m, label, bo)
+        m = _DB_VAR_PATTERN.match(spec_stripped)
         if m:
             db = int(m.group(1))
             type_name = m.group(2)
@@ -332,10 +356,10 @@ class S7Variable:
             extra_str = m.group(4)
             data_type = _parse_type_name(type_name)
             extra = _parse_extra(extra_str, data_type)
-            _validate_type(extra, data_type, spec)
-            bo = byte_order if byte_order is not None else ByteOrder.BIG
-            return cls(db=db, type=data_type, offset=offset, extra=extra, label=label, area=S7Area.DB, byte_order=bo)
-        m = _AREA_VAR_PATTERN.match(spec)
+            _validate_type(extra, data_type, spec_stripped)
+            bo_s7 = bo if bo is not None else ByteOrder.BIG
+            return cls(db=db, type=data_type, offset=offset, extra=extra, label=label, area=S7Area.DB, byte_order=bo_s7)
+        m = _AREA_VAR_PATTERN.match(spec_stripped)
         if m:
             area_name = m.group(1)
             area_map: dict[str, S7Area] = {str(a.value).lower(): a for a in S7Area}
@@ -345,15 +369,15 @@ class S7Variable:
             extra_str = m.group(4)
             data_type = _parse_type_name(type_name)
             extra = _parse_extra(extra_str, data_type)
-            _validate_type(extra, data_type, spec)
-            bo = byte_order if byte_order is not None else ByteOrder.BIG
-            return cls(db=0, type=data_type, offset=offset, extra=extra, label=label, area=area, byte_order=bo)
+            _validate_type(extra, data_type, spec_stripped)
+            bo_s7 = bo if bo is not None else ByteOrder.BIG
+            return cls(db=0, type=data_type, offset=offset, extra=extra, label=label, area=area, byte_order=bo_s7)
         raise ValueError(
             f"Invalid variable spec: {spec!r}. "
-            f"Expected format: DB<num>.<Type><offset>[.<extra>] "
-            f"or <Area>.<Type><offset>[.<extra>] "
-            f"or EIP.<Assembly>.<Type><offset>[.<extra>] "
-            f"e.g. DB200.Byte0, EB.Byte0, EIP.Input.Byte0"
+            f"Expected format: DB<num>.<Type><offset>[.<extra>][.<be|le|big|little>] "
+            f"or <Area>.<Type><offset>[.<extra>][.<be|le|big|little>] "
+            f"or EIP.<Assembly>.<Type><offset>[.<extra>][.<be|le|big|little>] "
+            f"e.g. DB200.Byte0, EB.Byte0, EIP.Input.Byte0, EIP.Input.Word2.be"
         )
 
     def decode(self, data: bytes | bytearray) -> Union[int, float, bool, str]:
