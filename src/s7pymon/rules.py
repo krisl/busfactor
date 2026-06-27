@@ -13,6 +13,7 @@ or mixed.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Sequence
 from typing import Any
 
 from .protocols import Connection
@@ -43,7 +44,7 @@ _RuleKey = int
 
 
 class RulesEngine:
-    def __init__(self, rules: list[OutputRule]):
+    def __init__(self, rules: Sequence[OutputRule]):
         self._rules = rules
         self._counters: dict[_RuleKey, int] = {}
         self._toggle_state: dict[_RuleKey, bool] = {}
