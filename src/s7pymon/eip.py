@@ -10,6 +10,7 @@ import re
 import threading
 from typing import cast
 
+from .engine import ReadGroup
 from .errors import log_error
 from .protocols import Connection, ConnectionConfig, ConnectionState, DataSource, ReadResult
 
@@ -230,3 +231,23 @@ class EIPConnection(Connection):
         self._output_bits = []
         self._input_size = 0
         self._output_size = 0
+
+
+def build_eip_read_groups(
+    input_assembly: int = 101,
+    input_size: int = 32,
+    output_assembly: int = 100,
+    output_size: int = 32,
+) -> list[ReadGroup]:
+    """Create read groups for configured EIP assemblies.
+
+    Unlike S7, EIP reads are determined by the assembly configuration
+    (input/output assembly IDs and sizes), not by variable coverage.
+    Each configured assembly always produces one read group so the hex
+    display shows the full assembly regardless of which variables are
+    monitored.
+    """
+    return [
+        ReadGroup(start=0, size=input_size, _source=DataSource.eip("Input")),
+        ReadGroup(start=0, size=output_size, _source=DataSource.eip("Output")),
+    ]
