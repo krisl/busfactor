@@ -2,16 +2,16 @@
 
 import pytest
 
-from s7pymon.cli import (
+from busfactor.cli import (
     ResolvedRuntime,
     RuntimeConfigError,
     load_merged_config,
     resolve_runtime,
 )
-from s7pymon.config import S7MonitorConfig
-from s7pymon.engine import WriteMode
-from s7pymon.logging import LogFormat
-from s7pymon.variable import S7Area
+from busfactor.config import S7MonitorConfig
+from busfactor.engine import WriteMode
+from busfactor.logging import LogFormat
+from busfactor.variable import S7Area
 
 
 def cfg(**kw):

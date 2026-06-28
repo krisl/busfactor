@@ -1,14 +1,14 @@
 import pytest
 from click.testing import CliRunner
 
-from s7pymon.app import WriteMode
-from s7pymon.cli import (
+from busfactor.app import WriteMode
+from busfactor.cli import (
     build_default_variables,
     build_read_groups,
     main,
     parse_variable_arg,
 )
-from s7pymon.variable import S7Area, DataType, S7Variable
+from busfactor.variable import S7Area, DataType, S7Variable
 
 
 class TestParseVariableArg:
@@ -107,7 +107,7 @@ class TestCLIHelp:
         runner = CliRunner()
         result = runner.invoke(main, ["--help"])
         assert result.exit_code == 0
-        assert "s7pymon" in result.output
+        assert "busfactor" in result.output
 
     def test_no_args_shows_error(self):
         runner = CliRunner()
