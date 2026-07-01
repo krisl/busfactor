@@ -135,12 +135,14 @@ class RulesEngine:
             encoded = self._encode_follow(rule, connection, parsed)
             if encoded is not None:
                 key = id(rule)
-                self._pending_follow[key] = (
-                    time.monotonic() + rule.delay_ms / 1000,
-                    target_var.source,
-                    target_var.offset,
-                    encoded,
-                )
+                existing = self._pending_follow.get(key)
+                if existing is None or existing[3] != encoded:
+                    self._pending_follow[key] = (
+                        time.monotonic() + rule.delay_ms / 1000,
+                        target_var.source,
+                        target_var.offset,
+                        encoded,
+                    )
         else:
             encoded = self._encode_follow(rule, connection, parsed)
             if encoded is not None:
